@@ -1,0 +1,34 @@
+# ── Python ───────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.build-venv/
+
+# ── PyInstaller build artifacts ──────────
+build/
+dist/
+*.spec.bak
+
+# ── Node / Vite (web frontend) ───────────
+web/node_modules/
+web/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Survey data (machine-local captures) ─
+survey_data/bundles/
+survey_data/references/
+survey_data/walks/
+
+# ── OS / editor cruft ────────────────────
+.DS_Store
+Thumbs.db
+nul
+*.log
+
+# ── VS Code ──────────────────────────────
+.vscode/

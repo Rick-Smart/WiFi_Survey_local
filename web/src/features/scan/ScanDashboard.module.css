@@ -1,0 +1,89 @@
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+.ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
+}
+.ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: var(--text-2);
+  padding: var(--space-8) var(--space-5);
+}
+.wIcon {
+  font-size: clamp(48px, 8vw, 64px);
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.4;
+  margin-bottom: var(--space-4);
+}
+.welcome h2 {
+  font-size: var(--fs-xl);
+  color: var(--text);
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+.welcome p {
+  font-size: var(--fs-md);
+  max-width: 420px;
+  line-height: 1.6;
+}
+.shortcut {
+  margin-top: var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+}

@@ -1,0 +1,30 @@
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.item {
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+.label {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  margin-bottom: 2px;
+}
+.value {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+/* Reflow based on the CARD's width, not the viewport. */
+@container (min-width: 340px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@container (min-width: 620px) {
+  .grid {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}

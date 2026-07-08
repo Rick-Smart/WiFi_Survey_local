@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WiFi Survey Pro</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <span class="icon">WS</span>
+    WiFi Survey Pro
+    <span class="badge">ENGINEER</span>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-btn-scan">Scan Dashboard</button>
+    <button class="tab-btn" id="tab-btn-walk">Site Walk Survey</button>
+  </div>
+  <div class="sep"></div>
+  <div id="status-bar">
+    <div class="dot" id="status-dot"></div>
+    <span id="status-text">Ready</span>
+  </div>
+  &nbsp;
+  <button class="btn btn-ghost" id="btn-export-pdf" disabled title="Export printable PDF report">PDF</button>
+  <button class="btn btn-ghost" id="btn-export" disabled title="Export HTML report">Export</button>
+  <button class="btn btn-secondary" id="btn-stop" style="display:none">Stop</button>
+  <button class="btn btn-secondary" id="btn-run-selected">Run Selected</button>
+  <button class="btn btn-primary" id="btn-run-all">Run All</button>
+</header>
+
+<!-- ── Layout ─────────────────────────────────────────────── -->
+<div class="layout tab-panel active" id="tab-scan">
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-section">Scan Modules</div>
+    <div id="module-list">
+      <!-- populated by JS -->
+    </div>
+
+    <div style="flex:1"></div>
+    <!-- Health score -->
+    <div class="score-widget" id="score-widget" style="display:none">
+      <div class="sw-label">Overall Health</div>
+      <div class="score-ring" id="score-ring">
+        <span class="sr-num" id="sr-num">–</span>
+        <span class="sr-grade" id="sr-grade"></span>
+        <span class="sr-label" id="sr-label"></span>
+      </div>
+      <div id="score-bars"></div>
+    </div>
+    <div style="height:12px"></div>
+  </aside>
+
+  <!-- Main panel -->
+  <main>
+    <div class="toolbar">
+      <span class="tl-title" id="toolbar-title">Select modules and click Run</span>
+      <button class="btn btn-ghost" style="font-size:12px" id="btn-select-all">All</button>
+      <button class="btn btn-ghost" style="font-size:12px" id="btn-deselect-all">None</button>
+      <button class="btn btn-ghost" style="font-size:12px" id="btn-collapse-all">Collapse</button>
+      <button class="btn btn-ghost" style="font-size:12px" id="btn-expand-all">Expand</button>
+    </div>
+    <div id="progress-bar"><div id="progress-fill"></div></div>
+    <div id="results">
+      <div id="welcome">
+        <div class="w-icon">RF</div>
+        <h2>WiFi Engineer Survey</h2>
+        <p>Select the scan modules you want to run using the toggles on the left, then click <b>Run All</b> or <b>Run Selected</b>.</p>
+        <div class="shortcut">Results open automatically · Most scans run offline</div>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<div class="walk-layout tab-panel" id="tab-walk">
+  <aside class="walk-sidebar">
+    <div class="walk-workflow-card">
+      <div class="walk-title">Workflow</div>
+      <div class="walk-workflow-step" id="walk-workflow-step">Step 1 of 4: Build Reference Walk</div>
+      <div class="walk-workflow-next" id="walk-workflow-next">Next action: record a reference walk so replay mode has something to match against.</div>
+      <div class="walk-workflow-list">
+        <div class="walk-workflow-item" id="wf-setup">1. Configure</div>
+        <div class="walk-workflow-item" id="wf-reference">2. Build Reference</div>
+        <div class="walk-workflow-item" id="wf-replay">3. Replay / Estimate</div>
+        <div class="walk-workflow-item" id="wf-review">4. Review / Export</div>
+      </div>
+    </div>
+
+    <div class="walk-panel" id="walk-replay-panel" style="margin:0 0 12px 0">
+      <div class="walk-title">Setup</div>
+      <div class="walk-help" style="margin-bottom:8px">
+        Configure the walk capture rate, step length, and any mobile assist before you start walking.
+      </div>
+      <div class="walk-row">
+        <label for="walk-interval">Auto sample every (sec)</label>
+        <input id="walk-interval" type="number" min="0.5" step="0.5" value="2">
+      </div>
+      <div class="walk-help" style="margin-bottom:8px">
+        <b>Auto Walk Assist (recommended)</b><br>
+        Open the mobile helper on your phone and enable motion sensors to stream heading + steps automatically.
+      </div>
+      <div class="walk-row">
+        <input id="mobile-url" type="text" readonly>
+        <button class="btn btn-ghost" id="btn-mobile-copy">Copy</button>
+        <button class="btn btn-ghost" id="btn-mobile-open">Open</button>
+      </div>
+      <div class="walk-row" style="align-items:flex-start">
+        <div style="flex:1;min-width:220px">
+          <div class="walk-status" id="mobile-status">Phone: <span class="off">not connected</span></div>
+          <div class="walk-help" id="mobile-status-detail" style="margin:0">
+            Pairing status: waiting for mobile heartbeat.
+          </div>
+        </div>
+        <div class="mobile-qr-wrap">
+          <img id="mobile-qr" alt="Mobile URL QR" class="mobile-qr" />
+          <div class="mobile-qr-caption" id="mobile-qr-caption">Scan to open /mobile on phone</div>
+        </div>
+      </div>
+      <div class="walk-row" style="justify-content:space-between">
+        <div class="dir-grid">
+          <span></span>
+          <button class="dir-btn" data-dir="N" title="Moved North" disabled>N</button>
+          <span></span>
+          <button class="dir-btn" data-dir="W" title="Moved West" disabled>W</button>
+          <button class="dir-btn" data-dir="S" title="Moved South" disabled>S</button>
+          <button class="dir-btn" data-dir="E" title="Moved East" disabled>E</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+          <label for="walk-step" style="font-size:10px;color:var(--text2)">Step meters</label>
+          <input id="walk-step" class="dir-step" type="number" min="0.1" step="0.1" value="2.0">
+        </div>
+      </div>
+    </div>
+
+    <div class="walk-panel" id="walk-reference-panel" style="margin:0 0 12px 0">
+      <div class="walk-title">Reference Walk</div>
+      <div class="walk-help" style="margin-bottom:8px">
+        Record this first. Replay estimation depends on this reference route fingerprint.
+      </div>
+      <div class="walk-row">
+        <input id="loc-ref-name" type="text" placeholder="Reference name (e.g. 1st Floor West)">
+      </div>
+      <div class="walk-row">
+        <label for="loc-interval">Interval (sec)</label>
+        <input id="loc-interval" type="number" min="0.5" step="0.5" value="2">
+      </div>
+      <div class="walk-row">
+        <button class="btn btn-primary" id="btn-loc-ref-start">Start Reference Walk</button>
+        <button class="btn btn-secondary" id="btn-loc-ref-stop" disabled>Stop Reference</button>
+      </div>
+      <div class="walk-row">
+        <select id="loc-reference-select" style="flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px">
+          <option value="">No reference sets yet</option>
+        </select>
+      </div>
+      <div class="walk-help" id="loc-estimate" style="margin:0">No replay estimate yet.</div>
+      <div class="walk-row">
+        <button class="btn btn-secondary" id="btn-loc-replay-start">Start Replay</button>
+        <button class="btn btn-secondary" id="btn-loc-replay-stop" disabled>Stop Replay</button>
+        <button class="btn btn-ghost" id="btn-loc-ref-delete">Delete</button>
+      </div>
+      <div class="walk-status" id="loc-status">Localization: <span class="off">idle</span></div>
+      <div class="walk-help" id="loc-confidence-guide" style="margin-top:8px">
+        Confidence guidance: when confidence is low, pause briefly, keep facing a consistent direction, and slow movement until confidence recovers.
+      </div>
+    </div>
+
+    <div class="walk-panel" id="walk-capture-panel" style="margin:0 0 12px 0">
+      <div class="walk-title">Walk Capture</div>
+      <div class="walk-help" style="margin-bottom:8px">
+        After the reference is established, use this capture panel to walk the site, tag checkpoints, and build the report.
+      </div>
+      <div class="walk-row">
+        <button class="btn btn-secondary" id="btn-walk-start">Start Walk</button>
+        <button class="btn btn-secondary" id="btn-walk-stop" disabled>Stop Walk</button>
+      </div>
+      <div class="walk-row">
+        <input id="walk-label" type="text" placeholder="Location tag (e.g. Lobby)">
+        <button class="btn btn-ghost" id="btn-walk-checkpoint" disabled>Tag Point</button>
+      </div>
+      <div class="walk-status" id="walk-status">Walk: <span class="off">idle</span></div>
+      <div class="walk-pos" id="walk-pos">Pos: x 0.0m, y 0.0m</div>
+      <div class="checkpoint-list" id="checkpoint-list">
+        <div class="checkpoint-item" style="color:var(--text2)">No checkpoints yet</div>
+      </div>
+    </div>
+
+    <div class="walk-panel" style="margin:0 0 12px 0">
+      <div class="walk-title">Persistence / Backup</div>
+      <div class="walk-help" style="margin-bottom:8px">
+        Save walk sessions, reference libraries, or a full backup bundle to disk so they can be reloaded later.
+      </div>
+      <div class="walk-row">
+        <input id="storage-name" type="text" placeholder="Artifact name (optional)">
+      </div>
+      <div class="walk-row">
+        <button class="btn btn-secondary" id="btn-save-walk">Save Walk</button>
+        <button class="btn btn-secondary" id="btn-save-refs">Save Refs</button>
+        <button class="btn btn-secondary" id="btn-save-bundle">Save Bundle</button>
+      </div>
+      <div class="walk-row" style="align-items:center;justify-content:space-between;gap:8px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2)">
+          <input id="storage-reset-after-bundle" type="checkbox">
+          Reset session after bundle save
+        </label>
+        <button class="btn btn-ghost" id="btn-reset-site-walk">Reset Session</button>
+        <button class="btn btn-ghost" id="btn-reset-and-delete" style="border-color:rgba(255,82,82,.4);color:var(--red)">Reset + Delete Saved</button>
+      </div>
+      <div class="walk-row">
+        <select id="saved-walks-select" style="flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px">
+          <option value="">No saved walks</option>
+        </select>
+        <button class="btn btn-ghost" id="btn-load-walk">Load</button>
+      </div>
+      <div class="walk-row">
+        <select id="saved-refs-select" style="flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px">
+          <option value="">No saved reference sets</option>
+        </select>
+        <button class="btn btn-ghost" id="btn-load-refs">Load</button>
+      </div>
+      <div class="walk-row">
+        <select id="saved-bundles-select" style="flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px">
+          <option value="">No saved bundles</option>
+        </select>
+        <button class="btn btn-ghost" id="btn-load-bundle">Load</button>
+      </div>
+      <div class="walk-help" id="storage-status" style="margin-top:8px">Persistence status: ready.</div>
+    </div>
+
+    <div class="walk-card">
+      <div class="walk-card-head">Live SSID / Channel Scan</div>
+      <div class="walk-card-body" id="walk-live-content">
+        <div class="empty-msg">Waiting for scan data…</div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="walk-main">
+    <div class="walk-card">
+      <div class="walk-card-head">Map / Route View</div>
+      <div class="walk-card-body">
+        <div class="floorplan-controls">
+          <input id="floorplan-file" type="file" accept="image/*">
+          <button class="btn btn-ghost" id="btn-floorplan-clear">Clear Floorplan</button>
+          <input id="floorplan-known-distance" type="number" min="0.5" step="0.5" value="10" style="width:90px" title="Known distance in meters">
+          <button class="btn btn-ghost" id="btn-floorplan-calibrate">Calibrate (2 pts)</button>
+          <button class="btn btn-ghost" id="btn-floorplan-reset-cal">Reset Cal</button>
+          <span style="font-size:11px;color:var(--text2)">If no floorplan is loaded, a coordinate grid heatmap is shown.</span>
+        </div>
+        <div id="floorplan-cal-status" style="font-size:11px;color:var(--text2);margin-bottom:8px">Calibration: not set</div>
+        <div class="map-wrap">
+          <canvas id="walk-map-canvas" class="map-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="walk-card">
+      <div class="walk-card-head">Site Walk Report</div>
+      <div class="walk-card-body" id="walk-report-content">
+        <div class="empty-msg">Start and stop a walk to generate a report.</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

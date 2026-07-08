@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WiFi Survey Mobile Walker</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:#0f1222;color:#e3e7f5;font-family:Segoe UI,system-ui,sans-serif;padding:14px}
+.card{background:#151a2f;border:1px solid #293055;border-radius:10px;padding:12px;margin-bottom:12px}
+h1{font-size:18px;margin:0 0 10px}
+label{font-size:12px;color:#9fb0d9;display:block;margin-bottom:5px}
+input,button{font-size:14px}
+input{width:100%;padding:9px;border-radius:8px;border:1px solid #2f3760;background:#0f1324;color:#e3e7f5}
+.row{display:flex;gap:8px}
+button{padding:10px 12px;border-radius:8px;border:1px solid #2d355e;background:#1c2240;color:#e3e7f5}
+button.primary{background:#00d4ff;color:#03131a;border:none;font-weight:700}
+button:disabled{opacity:.45}
+.small{font-size:12px;color:#9fb0d9;line-height:1.4}
+.value{font-family:Consolas,monospace;font-size:16px}
+.ok{color:#00e676}.warn{color:#ffd740}.bad{color:#ff5252}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Mobile Auto Walker</h1>
+    <div class="small">Open this on your phone while the laptop app is running. Keep phone facing forward for better heading quality.</div>
+  </div>
+
+  <div class="card">
+    <label for="stepLen">Step length (meters)</label>
+    <input id="stepLen" type="number" min="0.2" step="0.05" value="0.75">
+    <div style="height:8px"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#9fb0d9">
+      <input id="autoStart" type="checkbox" checked>
+      Auto-start streaming when laptop walk starts
+    </label>
+    <div style="height:10px"></div>
+    <div class="row">
+      <button id="btnPermission">Enable Sensors</button>
+      <button id="btnStart" class="primary" disabled>Start Auto Steps</button>
+      <button id="btnStop" disabled>Stop</button>
+    </div>
+    <div style="height:10px"></div>
+    <div class="small" id="status">Status: idle</div>
+  </div>
+
+  <div class="card">
+    <div class="small" style="margin-bottom:8px"><b>Step calibration</b> (walk 10 normal steps)</div>
+    <div class="row">
+      <input id="calDistance" type="number" min="1" step="0.5" value="7.5" style="max-width:120px">
+      <button id="btnCalibrate">Calibrate 10 Steps</button>
+    </div>
+    <div style="height:8px"></div>
+    <div class="small" id="calStatus">Calibration: not started.</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="small">Heading</div>
+        <div class="value" id="headingVal">--</div>
+      </div>
+      <div>
+        <div class="small">Detected steps</div>
+        <div class="value" id="stepVal">0</div>
+      </div>
+      <div>
+        <div class="small">Sent</div>
+        <div class="value" id="sentVal">0</div>
+      </div>
+      <div>
+        <div class="small">Heading jitter</div>
+        <div class="value" id="jitterVal">--</div>
+      </div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="small" id="driftWarn">Drift: waiting for heading samples.</div>
+  </div>
+
+  <div class="card small">
+    <div><b>How it works</b></div>
+    <div>1. Start walk on laptop tab first.</div>
+    <div>2. Tap Enable Sensors on phone.</div>
+    <div>3. Tap Start Auto Steps and walk naturally.</div>
+    <div>4. Phone estimates heading + steps and posts each step to the walk API.</div>
+  </div>
+
+<script>
+'use strict';
+let running = false;
+let sensorEnabled = false;
+let headingDeg = 0;
+let detectedSteps = 0;
+let sentSteps = 0;
+let lastStepAt = 0;
+let emaMag = 9.81;
+let stateTimer = null;
+let pingTimer = null;
+let calibrating = false;
+let calTargetSteps = 10;
+let calStepCount = 0;
+let lastSensorAtIso = null;
+let prevHeadingDeg = null;
+const headingDiffs = [];
+
+const $ = (id) => document.getElementById(id);
+
+function setStatus(text, cls='') {
+  const el = $('status');
+  el.textContent = 'Status: ' + text;
+  el.className = 'small ' + cls;
+}
+
+function updateCounters() {
+  $('headingVal').textContent = Number.isFinite(headingDeg) ? headingDeg.toFixed(0) + ' deg' : '--';
+  $('stepVal').textContent = String(detectedSteps);
+  $('sentVal').textContent = String(sentSteps);
+  const jitter = getHeadingJitterDeg();
+  $('jitterVal').textContent = Number.isFinite(jitter) ? jitter.toFixed(1) + ' deg' : '--';
+  updateDriftWarning();
+}
+
+function normalizeHeadingDiff(a, b) {
+  const d = ((a - b + 540) % 360) - 180;
+  return Math.abs(d);
+}
+
+function pushHeadingDiff(diff) {
+  headingDiffs.push(diff);
+  if (headingDiffs.length > 24) headingDiffs.shift();
+}
+
+function getHeadingJitterDeg() {
+  if (!headingDiffs.length) return null;
+  const avg = headingDiffs.reduce((s, v) => s + v, 0) / headingDiffs.length;
+  return avg;
+}
+
+function updateDriftWarning() {
+  const el = $('driftWarn');
+  const jitter = getHeadingJitterDeg();
+  if (!Number.isFinite(jitter)) {
+    el.className = 'small';
+    el.textContent = 'Drift: waiting for heading samples.';
+    return;
+  }
+  if (jitter >= 22) {
+    el.className = 'small bad';
+    el.textContent = `Drift: high heading jitter (${jitter.toFixed(1)} deg). Hold phone steady and pause 2-3 seconds.`;
+  } else if (jitter >= 12) {
+    el.className = 'small warn';
+    el.textContent = `Drift: moderate heading jitter (${jitter.toFixed(1)} deg). Keep forward orientation consistent.`;
+  } else {
+    el.className = 'small ok';
+    el.textContent = `Drift: low heading jitter (${jitter.toFixed(1)} deg).`;
+  }
+}
+
+function setCalibrationStatus(text, cls='') {
+  const el = $('calStatus');
+  el.textContent = 'Calibration: ' + text;
+  el.className = 'small ' + cls;
+}
+
+function handleCalibrationStep() {
+  if (!calibrating) return;
+  calStepCount += 1;
+  if (calStepCount < calTargetSteps) {
+    setCalibrationStatus(`step ${calStepCount}/${calTargetSteps} detected...`, 'warn');
+    return;
+  }
+
+  const distM = Math.max(1.0, Number($('calDistance').value || 7.5));
+  const stepLen = distM / calTargetSteps;
+  $('stepLen').value = stepLen.toFixed(2);
+  calibrating = false;
+  $('btnCalibrate').textContent = 'Calibrate 10 Steps';
+  setCalibrationStatus(`complete. New step length ${stepLen.toFixed(2)} m`, 'ok');
+}
+
+async function sendHeartbeat() {
+  try {
+    await api('/api/mobile/ping', {
+      running,
+      sensor_enabled: sensorEnabled,
+      auto_start: !!$('autoStart').checked,
+      heading_deg: Number.isFinite(headingDeg) ? Number(headingDeg.toFixed(1)) : null,
+      step_len_m: Math.max(0.2, Number($('stepLen').value || 0.75)),
+      detected_steps: detectedSteps,
+      sent_steps: sentSteps,
+      heading_jitter_deg: getHeadingJitterDeg(),
+      last_sensor_at: lastSensorAtIso,
+    });
+  } catch (_) {}
+}
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function requestPermissions() {
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      const p = await DeviceMotionEvent.requestPermission();
+      if (p !== 'granted') throw new Error('Motion permission denied');
+    }
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const p = await DeviceOrientationEvent.requestPermission();
+      if (p !== 'granted') throw new Error('Orientation permission denied');
+    }
+    sensorEnabled = true;
+    $('btnStart').disabled = false;
+    setStatus('sensors enabled', 'ok');
+    sendHeartbeat();
+  } catch (e) {
+    setStatus('permission failed: ' + e.message, 'bad');
+  }
+}
+
+window.addEventListener('deviceorientation', (e) => {
+  lastSensorAtIso = new Date().toISOString();
+  if (typeof e.webkitCompassHeading === 'number') {
+    headingDeg = e.webkitCompassHeading;
+  } else if (typeof e.alpha === 'number') {
+    headingDeg = (360 - e.alpha) % 360;
+  }
+  if (prevHeadingDeg != null && Number.isFinite(headingDeg)) {
+    pushHeadingDiff(normalizeHeadingDiff(headingDeg, prevHeadingDeg));
+  }
+  prevHeadingDeg = headingDeg;
+  updateCounters();
+});
+
+window.addEventListener('devicemotion', async (e) => {
+  if (!running && !calibrating) return;
+  const a = e.accelerationIncludingGravity;
+  if (!a) return;
+  lastSensorAtIso = new Date().toISOString();
+
+  const x = a.x || 0, y = a.y || 0, z = a.z || 0;
+  const mag = Math.sqrt(x*x + y*y + z*z);
+  emaMag = 0.9 * emaMag + 0.1 * mag;
+  const dynamic = mag - emaMag;
+  const now = Date.now();
+
+  if (dynamic > 1.15 && (now - lastStepAt) > 300) {
+    lastStepAt = now;
+    detectedSteps += 1;
+    handleCalibrationStep();
+    updateCounters();
+
+    if (!running) return;
+
+    const stepLen = Math.max(0.2, Number($('stepLen').value || 0.75));
+    try {
+      await api('/api/walk/auto-step', { heading_deg: headingDeg, step_m: stepLen });
+      sentSteps += 1;
+      updateCounters();
+      sendHeartbeat();
+    } catch (err) {
+      setStatus('send failed: ' + err.message, 'bad');
+    }
+  }
+});
+
+function startStatePolling() {
+  if (stateTimer) clearInterval(stateTimer);
+  stateTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/walk/state');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const s = await r.json();
+      const autoStart = !!$('autoStart').checked;
+
+      if (s.active && autoStart && sensorEnabled && !running) {
+        running = true;
+        $('btnStart').disabled = true;
+        $('btnStop').disabled = false;
+        setStatus('auto-started with laptop walk', 'ok');
+      }
+
+      if (!s.active && running) {
+        running = false;
+        $('btnStart').disabled = !sensorEnabled;
+        $('btnStop').disabled = true;
+        setStatus('walk stopped on laptop', 'warn');
+      }
+      sendHeartbeat();
+    } catch (_) {}
+  }, 2500);
+
+  if (pingTimer) clearInterval(pingTimer);
+  pingTimer = setInterval(sendHeartbeat, 1500);
+}
+
+$('btnPermission').addEventListener('click', requestPermissions);
+$('btnStart').addEventListener('click', async () => {
+  if (!sensorEnabled) return;
+  running = true;
+  $('btnStart').disabled = true;
+  $('btnStop').disabled = false;
+  setStatus('auto-step streaming active', 'ok');
+  sendHeartbeat();
+});
+$('btnStop').addEventListener('click', () => {
+  running = false;
+  $('btnStart').disabled = !sensorEnabled;
+  $('btnStop').disabled = true;
+  setStatus('paused', 'warn');
+  sendHeartbeat();
+});
+
+$('btnCalibrate').addEventListener('click', () => {
+  if (!sensorEnabled) {
+    setCalibrationStatus('enable sensors first', 'bad');
+    return;
+  }
+  if (!calibrating) {
+    calibrating = true;
+    calStepCount = 0;
+    $('btnCalibrate').textContent = 'Cancel Calibration';
+    setCalibrationStatus(`walk ${calTargetSteps} normal steps now`, 'warn');
+  } else {
+    calibrating = false;
+    $('btnCalibrate').textContent = 'Calibrate 10 Steps';
+    setCalibrationStatus('cancelled', 'warn');
+  }
+});
+
+startStatePolling();
+updateCounters();
+sendHeartbeat();
+</script>
+</body>
+</html>

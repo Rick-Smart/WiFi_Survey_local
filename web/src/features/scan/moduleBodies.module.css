@@ -1,0 +1,26 @@
+.note {
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.empty {
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.tableCaption {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+.mineTag {
+  font-size: var(--fs-2xs);
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 6px;
+}
+.mineRow td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

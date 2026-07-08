@@ -1,0 +1,28 @@
+/* Outer scroll region owns the bounded height + vertical scroll. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+/* Inner multicol has AUTO height so it grows with content and the column
+   count is driven purely by width — cards pack tightly under the card above
+   them (masonry) with no ragged row gaps and no horizontal overflow. */
+.cols {
+  column-width: var(--card-min, 460px);
+  column-gap: var(--space-4);
+}
+
+/* Each card stays intact within one column and provides the vertical gap. */
+.cols > * {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  margin: 0 0 var(--space-4);
+}
+
+/* Full-width items: welcome/empty states and cards toggled to full width. */
+.cols > .span,
+.cols > [data-fullwidth] {
+  column-span: all;
+}

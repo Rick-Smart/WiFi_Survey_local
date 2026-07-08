@@ -1,0 +1,124 @@
+.sidebar {
+  width: clamp(220px, 24vw, 280px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.heading {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.section {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition:
+    background var(--dur-fast),
+    border-color var(--dur-fast);
+  user-select: none;
+}
+.item:hover {
+  background: var(--surface-2);
+}
+.item[data-active] {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+.info {
+  flex: 1;
+  min-width: 0;
+}
+.name {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desc {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background var(--dur);
+}
+.dot[data-status="ok"] {
+  background: var(--green);
+}
+.dot[data-status="warning"] {
+  background: var(--yellow);
+}
+.dot[data-status="error"] {
+  background: var(--red);
+}
+.dot[data-status="running"] {
+  background: var(--accent);
+  animation: pulse 1s infinite;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 18px;
+  cursor: pointer;
+  transition: background var(--dur);
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  left: 3px;
+  top: 3px;
+  transition: transform var(--dur);
+}
+.toggle input:checked + .slider {
+  background: var(--accent);
+}
+.toggle input:checked + .slider::before {
+  transform: translateX(16px);
+}

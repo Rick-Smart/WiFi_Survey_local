@@ -1,0 +1,98 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* Children can size against the card's own width. */
+  container-type: inline-size;
+  transition: border-color var(--dur);
+}
+.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.head[data-clickable] {
+  cursor: pointer;
+}
+.head[data-clickable]:hover {
+  background: var(--surface-2);
+}
+
+.icon {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  flex-shrink: 0;
+  min-width: 2.4em;
+}
+.title {
+  font-weight: 600;
+  font-size: var(--fs-md);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.chevron {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  transition: transform var(--dur);
+  flex-shrink: 0;
+}
+.card[data-collapsed] .chevron {
+  transform: rotate(-90deg);
+}
+
+.expandBtn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
+}
+.expandBtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.expandBtn[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+/* Content-driven height that animates open/closed with no fixed cap. */
+.body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur) ease;
+}
+.card[data-collapsed] .body {
+  grid-template-rows: 0fr;
+}
+.bodyInner {
+  overflow: hidden;
+  min-height: 0;
+}
+.padded {
+  padding: var(--space-3) var(--space-4);
+}

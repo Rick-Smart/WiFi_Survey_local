@@ -1,0 +1,14 @@
+.badge {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--badge-color);
+  background: color-mix(in srgb, var(--badge-color) 15%, transparent);
+}
+.badge[data-running] {
+  animation: pulse 1s infinite;
+}

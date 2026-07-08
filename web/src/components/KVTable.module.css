@@ -1,0 +1,28 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table tr:nth-child(even) td {
+  background: var(--row-alt);
+}
+.table td {
+  padding: var(--space-2) var(--space-4);
+  vertical-align: top;
+  border-bottom: 1px solid var(--hairline);
+}
+.key {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  /* Fluid key column — narrows on tight cards, never dominates. */
+  width: clamp(35%, 40cqw, 46%);
+}
+.val {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-family: var(--font-mono);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.mono {
+  font-family: var(--font-mono);
+}

@@ -1,0 +1,30 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4) var(--space-2);
+}
+.cap {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.track {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+.val {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}

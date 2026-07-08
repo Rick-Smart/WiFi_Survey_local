@@ -1,0 +1,14 @@
+.spark {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 20px;
+  vertical-align: middle;
+}
+.spark > span {
+  width: 4px;
+  background: var(--accent);
+  border-radius: 1px;
+  display: inline-block;
+  min-height: 2px;
+}
