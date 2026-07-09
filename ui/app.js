@@ -978,19 +978,46 @@ function setModuleStatus(id, status) {
 }
 
 // ── Score computation ─────────────────────────────────────────
+// Piecewise-linear interpolation over (x, y) anchor points. Values outside
+// the anchor range are clamped to the nearest endpoint.
+function interpolate(x, anchors) {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  const last = anchors[anchors.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [x0, y0] = anchors[i];
+    const [x1, y1] = anchors[i + 1];
+    if (x >= x0 && x <= x1) {
+      const t = (x - x0) / (x1 - x0);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return last[1];
+}
+
 function computeAndShowScore() {
   const parts = {};
 
-  // Signal (40 pts)
+  // Signal (40 pts) — continuous interpolation across realistic dBm anchors,
+  // so every dBm reading maps to a distinct score instead of 5 coarse tiers.
   const iface = state.results["interface"];
   if (iface?.data?.signal_dbm != null) {
     const dbm = iface.data.signal_dbm;
-    parts.Signal =
-      dbm >= -50 ? 40 : dbm >= -60 ? 32 : dbm >= -70 ? 20 : dbm >= -80 ? 10 : 0;
+    parts.Signal = Math.round(
+      interpolate(dbm, [
+        [-90, 0],
+        [-80, 8],
+        [-70, 20],
+        [-67, 25],
+        [-60, 33],
+        [-50, 40],
+        [-30, 40],
+      ]),
+    );
     parts._Signal_max = 40;
   }
 
-  // Latency / loss (30 pts)
+  // Latency / loss (30 pts) — ping (0-20) + packet loss (0-10), both continuous.
   const lat = state.results["latency"];
   if (lat?.data?.targets) {
     const gw = lat.data.targets.find((t) => t.label === "Default Gateway");
@@ -1000,39 +1027,46 @@ function computeAndShowScore() {
     } else if (gw) {
       const loss = gw.loss_pct || 0;
       const avg = gw.avg_ms || 0;
-      if (loss > 10) pts -= 15;
-      else if (loss > 5) pts -= 8;
-      else if (loss > 0) pts -= 3;
-      if (avg > 100) pts -= 15;
-      else if (avg > 50) pts -= 8;
-      else if (avg > 20) pts -= 3;
+      // Ping: full 20 pts at <=5 ms, tapering to 0 at >=150 ms.
+      const pingPts = interpolate(avg, [
+        [5, 20],
+        [150, 0],
+      ]);
+      // Loss: full 10 pts at 0%, tapering to 0 at >=15%.
+      const lossPts = interpolate(loss, [
+        [0, 10],
+        [15, 0],
+      ]);
+      pts = pingPts + lossPts;
     }
-    parts.Latency = Math.max(0, pts);
+    parts.Latency = Math.round(Math.max(0, pts));
     parts._Latency_max = 30;
   }
 
-  // Channel (15 pts)
+  // Channel (15 pts) — real co-channel congestion for BOTH bands. Each AP
+  // sharing your channel costs points; 2.4 GHz overlap is penalised harder.
   const ch = state.results["channel_survey"];
   if (ch?.data?.my_channel) {
     const myCh = ch.data.my_channel;
-    const cnt = (myCh <= 14 ? ch.data.ch_24 : ch.data.ch_5)[myCh] || 0;
-    parts.Channel =
-      myCh <= 14 ? (cnt > 5 ? 2 : cnt > 3 ? 7 : cnt > 1 ? 11 : 15) : 15;
+    const map = (myCh <= 14 ? ch.data.ch_24 : ch.data.ch_5) || {};
+    const coChannel = Math.max(0, (map[myCh] || 0) - 1); // exclude our own AP
+    const penaltyPer = myCh <= 14 ? 3 : 1.5;
+    parts.Channel = Math.round(Math.max(0, 15 - coChannel * penaltyPer));
     parts._Channel_max = 15;
   }
 
-  // Radio (15 pts)
+  // Radio (15 pts) — Wi-Fi generation is a discrete hardware property.
   const phy = state.results["phy_rate"] || state.results["interface"];
   const radio = (phy?.data?.radio_type || "").toLowerCase();
   if (radio) {
     const r = radio.includes("be")
       ? 15
       : radio.includes("ax")
-        ? 14
+        ? 13
         : radio.includes("ac")
-          ? 11
+          ? 10
           : radio.includes("n")
-            ? 7
+            ? 6
             : radio.includes("g")
               ? 3
               : radio.includes("b")

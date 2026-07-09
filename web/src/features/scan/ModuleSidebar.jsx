@@ -1,4 +1,5 @@
 import { useAppStore } from "../../store/useAppStore.js";
+import { HealthScore } from "./HealthScore.jsx";
 import styles from "./ModuleSidebar.module.css";
 
 // Groups modules by their `category` field, preserving first-seen order.
@@ -69,6 +70,7 @@ export function ModuleSidebar() {
           ))}
         </div>
       ))}
+      <HealthScore results={results} />
     </aside>
   );
 }
