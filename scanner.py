@@ -3,6 +3,7 @@ scanner.py  —  WiFi Survey Pro
 All scan modules.  Add a new class + register it in MODULES to extend the app.
 """
 
+import json
 import re
 import socket
 import statistics
@@ -14,13 +15,84 @@ from datetime import datetime
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run(args, timeout=25):
+def _run(args, timeout=25, check=False):
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
                            encoding='utf-8', errors='replace')
+        if check and r.returncode != 0:
+            return ''
         return r.stdout
     except Exception:
         return ''
+
+
+def _fetch_wlan_events(max_events=40):
+    """Read WLAN connect/disconnect/fail events from the Windows event log.
+    Returns a list of dicts sorted oldest→newest. No admin required."""
+    ps_cmd = (
+        "$ids=@(8001,8002,8003);"
+        "Get-WinEvent -LogName 'Microsoft-Windows-WLAN-AutoConfig/Operational'"
+        f" -MaxEvents {max_events} -ErrorAction SilentlyContinue"
+        " | Where-Object {$ids -contains $_.Id}"
+        " | Select-Object TimeCreated,Id,Message"
+        " | Sort-Object TimeCreated"
+        " | ConvertTo-Json -Depth 2"
+    )
+    raw = _run(['powershell', '-NoProfile', '-Command', ps_cmd],
+               timeout=15, check=True)
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+        if isinstance(items, dict):      # single event comes back as object
+            items = [items]
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+    from datetime import timezone
+
+    def _field(pattern, text):
+        m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        return m.group(1).strip() if m else None
+
+    result = []
+    for ev in items:
+        eid = ev.get('Id')
+        msg = ev.get('Message') or ''
+        ts_raw = str(ev.get('TimeCreated', ''))
+
+        # PowerShell ConvertTo-Json encodes dates as /Date(epoch_ms)/
+        ts_m = re.search(r'/Date\((\d+)\)/', ts_raw)
+        if ts_m:
+            dt = datetime.fromtimestamp(int(ts_m.group(1)) / 1000, tz=timezone.utc)
+            ts_iso = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        else:
+            ts_iso = ts_raw
+
+        ssid = _field(r'^\s*SSID\s*:\s*(.+)', msg)
+
+        if eid == 8001:       # Connect success
+            result.append({
+                'time': ts_iso, 'type': 'connect', 'ssid': ssid,
+                'phy':  _field(r'PHY Type\s*:\s*(.+)', msg),
+                'auth': _field(r'Authentication\s*:\s*(.+)', msg),
+            })
+        elif eid == 8003:     # Disconnect
+            result.append({
+                'time': ts_iso, 'type': 'disconnect', 'ssid': ssid,
+                'reason': _field(r'Reason\s*:\s*(.+)', msg),
+            })
+        elif eid == 8002:     # Connect failure
+            rssi_raw = _field(r'RSSI\s*:\s*(\d+)', msg)
+            # RSSI 255 = not measured
+            rssi = None if rssi_raw in (None, '255') else int(rssi_raw)
+            result.append({
+                'time': ts_iso, 'type': 'fail', 'ssid': ssid,
+                'reason': _field(r'Failure Reason\s*:\s*(.+)', msg),
+                'rssi': rssi,
+            })
+
+    return result
 
 
 def _extract(pattern, text, default=None, flags=re.IGNORECASE | re.MULTILINE):
@@ -85,6 +157,7 @@ class ScanModule(ABC):
     id              = ''
     name            = ''
     description     = ''
+    hint            = ''      # longer tooltip shown on hover in the sidebar
     category        = ''       # 'connection' | 'rf' | 'security' | 'network' | 'advanced'
     default_enabled = True
     tags            = []       # e.g. ['slow', 'internet']
@@ -94,6 +167,7 @@ class ScanModule(ABC):
             'id':              self.id,
             'name':            self.name,
             'description':     self.description,
+            'hint':            self.hint,
             'category':        self.category,
             'default_enabled': self.default_enabled,
             'tags':            self.tags,
@@ -125,6 +199,10 @@ class InterfaceScan(ScanModule):
     id          = 'interface'
     name        = 'Interface Info'
     description = 'Active WiFi connection — SSID, BSSID, channel, PHY rates'
+    hint        = ('Reports your active SSID, access-point MAC (BSSID), operating channel and band, '
+                   'and the TX/RX PHY rates negotiated by your adapter. Use this to confirm you are '
+                   'connected to the correct AP on the right band and that the data rate matches '
+                   'expectations for your distance from the access point.')
     category    = 'connection'
     tags        = []
 
@@ -181,6 +259,10 @@ class IPConfigScan(ScanModule):
     id          = 'ipconfig'
     name        = 'IP Configuration'
     description = 'IPv4/IPv6, gateway, DHCP server, DNS servers, lease times'
+    hint        = ('Reads your IPv4 and IPv6 addresses, subnet mask, default gateway, DHCP server, '
+                   'DNS resolvers, and DHCP lease times. Useful for diagnosing addressing conflicts, '
+                   'missing IPv6 connectivity, stale DHCP leases, or incorrect DNS assignments that '
+                   'can cause intermittent name-resolution failures.')
     category    = 'network'
     tags        = []
 
@@ -255,6 +337,11 @@ class SecurityScan(ScanModule):
     id          = 'security'
     name        = 'Security Assessment'
     description = 'Authentication, cipher strength, 802.11w MFP, FIPS status'
+    hint        = ('Audits your connection security: authentication protocol (Open/WPA2/WPA3), '
+                   'encryption cipher (TKIP is legacy and weak; CCMP/GCMP is the current standard), '
+                   '802.11w Management Frame Protection (defends against deauthentication attacks), '
+                   'and FIPS 140-2 compliance status. Flags configurations that expose your traffic '
+                   'or connection to known attacks.')
     category    = 'security'
     tags        = []
 
@@ -309,6 +396,11 @@ class ChannelSurveyScan(ScanModule):
     id          = 'channel_survey'
     name        = 'Channel Survey'
     description = 'All visible APs, channel utilization map, congestion analysis'
+    hint        = ('Scans all visible access points and maps per-channel occupancy across 2.4 GHz '
+                   'and 5 GHz. Co-channel interference — multiple APs sharing your channel — is '
+                   'the primary cause of throughput degradation in dense environments. '
+                   '2.4 GHz overlap is penalised harder because it has far fewer non-overlapping '
+                   'channels than 5 GHz.')
     category    = 'rf'
     tags        = []
 
@@ -424,6 +516,10 @@ class LatencyScan(ScanModule):
     id          = 'latency'
     name        = 'Latency Tests'
     description = 'Ping gateway, DNS servers, and optional internet targets (10 pings each)'
+    hint        = ('Pings your default gateway, DNS servers, and public internet targets 10 times '
+                   'each, measuring average round-trip time and packet loss. Gateway RTT directly '
+                   'reflects RF link health — a local hop should be <10 ms. Packet loss above ~1% '
+                   'strongly indicates RF interference, driver problems, or AP overload.')
     category    = 'network'
     tags        = ['slow']
 
@@ -527,6 +623,10 @@ class DNSScan(ScanModule):
     id          = 'dns'
     name        = 'DNS Resolution'
     description = 'Resolve public domains and measure lookup latency'
+    hint        = ('Resolves a set of well-known public hostnames and records lookup latency per '
+                   'server. Slow DNS (>50 ms) causes perceptible delays every time a browser, app, '
+                   'or OS opens a new connection — even when ping latency looks healthy. Identifies '
+                   'whether resolution failures are network-wide or isolated to specific servers.')
     category    = 'network'
     tags        = ['internet']
 
@@ -573,33 +673,87 @@ class StatisticsScan(ScanModule):
     id          = 'statistics'
     name        = '802.11 Frame Statistics'
     description = 'TX/RX frame counts, retries, ACK/CTS timeouts since last association'
+    hint        = ('Reads driver counters for TX/RX frames, retry attempts, and ACK/CTS timeouts '
+                   'accumulated since your last association event. A retry rate above ~10% points '
+                   'to marginal signal, RF interference, or a saturated channel. Note: counters '
+                   'reset on every roam, so run this after a stable association for best results.')
     category    = 'advanced'
     tags        = []
 
     def run(self):
-        raw = _run(['netsh', 'wlan', 'show', 'statistics'])
-        if not raw:
-            return self._error('netsh wlan show statistics returned no output')
+        # ── Primary: netsh wlan show statistics ──────────────────────────────
+        raw = _run(['netsh', 'wlan', 'show', 'statistics'], check=True)
+        if raw:
+            pats = {
+                'frames_tx':         r'Frames transmitted\s*:\s*(\d+)',
+                'frames_rx':         r'Frames received\s*:\s*(\d+)',
+                'frames_dropped_tx': r'Frames dropped\s*:\s*(\d+)',
+                'beacons_rx':        r'Beacons received\s*:\s*(\d+)',
+                'multicast_rx':      r'Multicast received\s*:\s*(\d+)',
+                'dup_frames':        r'Duplicate frames\s*:\s*(\d+)',
+                'cts_timeout':       r'CTS timeout\s*:\s*(\d+)',
+                'ack_timeout':       r'ACK timeout\s*:\s*(\d+)',
+                'tx_retries':        r'Transmissions with retries\s*:\s*(\d+)',
+            }
+            d = {}
+            for key, pat in pats.items():
+                m = re.search(pat, raw, re.IGNORECASE)
+                d[key] = int(m.group(1)) if m else None
 
-        pats = {
-            'frames_tx':         r'Frames transmitted\s*:\s*(\d+)',
-            'frames_rx':         r'Frames received\s*:\s*(\d+)',
-            'frames_dropped_tx': r'Frames dropped\s*:\s*(\d+)',
-            'beacons_rx':        r'Beacons received\s*:\s*(\d+)',
-            'multicast_rx':      r'Multicast received\s*:\s*(\d+)',
-            'dup_frames':        r'Duplicate frames\s*:\s*(\d+)',
-            'cts_timeout':       r'CTS timeout\s*:\s*(\d+)',
-            'ack_timeout':       r'ACK timeout\s*:\s*(\d+)',
-            'tx_retries':        r'Transmissions with retries\s*:\s*(\d+)',
-        }
-        d = {}
-        for key, pat in pats.items():
-            m = re.search(pat, raw, re.IGNORECASE)
-            d[key] = int(m.group(1)) if m else None
+            tx    = d.get('frames_tx') or 0
+            retry = d.get('tx_retries') or 0
+            d['retry_rate_pct'] = round(retry / tx * 100, 2) if tx else None
+            d['_source'] = 'netsh'
 
-        tx    = d.get('frames_tx') or 0
-        retry = d.get('tx_retries') or 0
-        d['retry_rate_pct'] = round(retry / tx * 100, 2) if tx else None
+        else:
+            # ── Fallback: Get-NetAdapterStatistics via PowerShell ─────────────
+            ps_cmd = (
+                "Get-NetAdapterStatistics | Where-Object {$_.Name -like 'Wi-Fi' -or "
+                "$_.Name -like 'Wireless*'} | Select-Object "
+                "ReceivedUnicastPackets,ReceivedMulticastPackets,ReceivedBroadcastPackets,"
+                "ReceivedDiscardedPackets,ReceivedPacketErrors,"
+                "SentUnicastPackets,SentMulticastPackets,SentBroadcastPackets,"
+                "OutboundDiscardedPackets,OutboundPacketErrors | ConvertTo-Json"
+            )
+            ps_raw = _run(['powershell', '-NoProfile', '-Command', ps_cmd],
+                          timeout=15, check=True)
+            if not ps_raw:
+                return self._error(
+                    'netsh wlan show statistics is not available on this system '
+                    'and the PowerShell fallback also failed.'
+                )
+            try:
+                ps = json.loads(ps_raw)
+                # If multiple adapters returned, take the first
+                if isinstance(ps, list):
+                    ps = ps[0] if ps else {}
+            except (json.JSONDecodeError, IndexError):
+                return self._error('Could not parse PowerShell network adapter statistics.')
+
+            rx_total = ((ps.get('ReceivedUnicastPackets') or 0) +
+                        (ps.get('ReceivedMulticastPackets') or 0) +
+                        (ps.get('ReceivedBroadcastPackets') or 0))
+            tx_total = ((ps.get('SentUnicastPackets') or 0) +
+                        (ps.get('SentMulticastPackets') or 0) +
+                        (ps.get('SentBroadcastPackets') or 0))
+            d = {
+                'frames_tx':         tx_total or None,
+                'frames_rx':         rx_total or None,
+                'frames_dropped_tx': ps.get('OutboundDiscardedPackets'),
+                'rx_discarded':      ps.get('ReceivedDiscardedPackets'),
+                'rx_errors':         ps.get('ReceivedPacketErrors'),
+                'tx_errors':         ps.get('OutboundPacketErrors'),
+                'multicast_rx':      ps.get('ReceivedMulticastPackets'),
+                # 802.11-specific counters unavailable via this source
+                'frames_dropped_tx': ps.get('OutboundDiscardedPackets'),
+                'beacons_rx':        None,
+                'dup_frames':        None,
+                'cts_timeout':       None,
+                'ack_timeout':       None,
+                'tx_retries':        None,
+                'retry_rate_pct':    None,
+                '_source':           'ps_adapter',
+            }
 
         recs, warnings = [], []
         rr = d.get('retry_rate_pct')
@@ -615,11 +769,33 @@ class StatisticsScan(ScanModule):
         if ack > 100:
             warnings.append(f'High ACK timeout count: {ack}')
 
+        if d.get('_source') == 'ps_adapter':
+            warnings.append(
+                'netsh wlan show statistics is unavailable on this system — '
+                'showing adapter packet counters instead. '
+                'Retry/ACK/CTS metrics are not available.'
+            )
+
         score = 100
         if rr is not None:
             if rr > 20: score -= 40
             elif rr > 10: score -= 20
             elif rr > 5:  score -= 10
+
+        # ── WLAN event log (no admin required) ───────────────────────────────
+        events = _fetch_wlan_events()
+        if events:
+            d['event_log'] = events
+            d['connects_recent']    = sum(1 for e in events if e['type'] == 'connect')
+            d['disconnects_recent'] = sum(1 for e in events if e['type'] == 'disconnect')
+            d['failures_recent']    = sum(1 for e in events if e['type'] == 'fail')
+            # Penalise score for repeated failures/disconnects
+            if d['failures_recent'] >= 3:
+                warnings.append(f"{d['failures_recent']} connection failures in recent event log")
+                score = max(0, score - 20)
+            if d['disconnects_recent'] >= 3:
+                warnings.append(f"{d['disconnects_recent']} disconnects in recent event log")
+                score = max(0, score - 10)
 
         return self._ok(d, score=max(0, score), recs=recs, warnings=warnings)
 
@@ -632,6 +808,10 @@ class DriverScan(ScanModule):
     id          = 'driver'
     name        = 'Adapter & Driver'
     description = 'WiFi adapter hardware, driver version, supported radio types'
+    hint        = ('Reports the WiFi adapter model, installed driver version and age, and supported '
+                   '802.11 standards (a/b/g/n/ac/ax/be). An outdated driver can disable key '
+                   'features such as beamforming, MU-MIMO, or 160 MHz channel bonding, capping '
+                   'throughput regardless of what the access point supports.')
     category    = 'advanced'
     tags        = []
 
@@ -681,6 +861,11 @@ class PhyRateScan(ScanModule):
     id          = 'phy_rate'
     name        = 'PHY Rate Analysis'
     description = 'Analyze negotiated PHY rates vs. theoretical maximums and signal conditions'
+    hint        = ('Compares your negotiated PHY rate to the theoretical maximum for your radio '
+                   'generation, channel width, and MIMO stream count. A large gap usually means '
+                   'the driver selected conservative MCS settings due to signal quality, '
+                   'interference, or a capability mismatch between the adapter and the AP. '
+                   'Also factors signal level into the overall health score.')
     category    = 'rf'
     tags        = []
 

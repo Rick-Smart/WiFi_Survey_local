@@ -1,0 +1,222 @@
+.sidebar {
+  width: clamp(240px, 26vw, 300px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  gap: 0;
+}
+
+/* Workflow */
+.workflow {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.workflowSteps {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+.wfStep {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text-2);
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.wfCurrent {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.wfMuted {
+  opacity: 0.4;
+}
+.workflowNext {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* Sections */
+.section {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--dur-fast);
+}
+.sectionTitle {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--space-2);
+}
+.emphasis {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.muted {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--fs-xs);
+}
+.row label {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.help {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.45;
+  margin-bottom: var(--space-2);
+}
+
+/* Inputs */
+.numInput {
+  width: 60px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+}
+.urlInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.labelInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+}
+.select {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+}
+.unit {
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+}
+
+/* Buttons */
+.btnPrimary {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnSecondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnSecondary:disabled,
+.btnPrimary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btnGhost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnGhost:hover {
+  color: var(--text);
+  border-color: var(--text-2);
+}
+.btnGhost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Status */
+.on {
+  color: var(--green);
+  font-weight: 500;
+}
+.off {
+  color: var(--text-2);
+}
+.mobileStatus,
+.walkStatus,
+.walkPos {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  margin-bottom: var(--space-1);
+}
+
+/* Calibration */
+.calStatus {
+  font-size: var(--fs-xs);
+  color: var(--green);
+  margin-top: var(--space-1);
+}
+
+/* Localization estimate */
+.locEstimate {
+  font-size: var(--fs-xs);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 4px;
+  margin-top: var(--space-2);
+  line-height: 1.4;
+}
+.estGood {
+  background: rgba(0, 230, 118, 0.1);
+  color: var(--green);
+}
+.estFair {
+  background: rgba(255, 215, 64, 0.1);
+  color: var(--yellow);
+}
+.estPoor {
+  background: rgba(255, 82, 82, 0.1);
+  color: var(--red);
+}

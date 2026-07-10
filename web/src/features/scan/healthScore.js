@@ -108,13 +108,13 @@ export function computeHealthScore(results) {
   const score = max > 0 ? Math.round((total / max) * 100) : 0;
 
   const [grade, label, color] =
-    score >= 85
+    score >= 90
       ? ["A", "Excellent", "var(--green)"]
-      : score >= 70
+      : score >= 80
         ? ["B", "Good", "var(--green)"]
-        : score >= 55
+        : score >= 70
           ? ["C", "Fair", "var(--yellow)"]
-          : score >= 40
+          : score >= 60
             ? ["D", "Poor", "var(--orange)"]
             : ["F", "Very Poor", "var(--red)"];
 

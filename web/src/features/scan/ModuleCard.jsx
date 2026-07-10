@@ -57,8 +57,18 @@ function Recommendations({ items }) {
   );
 }
 
-export function ModuleCard({ id, name, result, duration }) {
+export function ModuleCard({ id, name, hint, result, duration }) {
   const icon = MODULE_ICONS[id] || "MOD";
+  const hintIcon = hint ? (
+    <i
+      className={styles.hint}
+      data-hint={hint}
+      onClick={(e) => e.stopPropagation()}
+      title=""
+    >
+      i
+    </i>
+  ) : null;
 
   // Still scanning
   if (!result) {
@@ -68,6 +78,7 @@ export function ModuleCard({ id, name, result, duration }) {
           icon={icon}
           title={name}
           badge={<Badge running>SCANNING…</Badge>}
+          right={hintIcon}
         />
         <Card.Body>
           <Skeleton />
@@ -86,6 +97,7 @@ export function ModuleCard({ id, name, result, duration }) {
         title={name}
         meta={durStr}
         badge={<Badge status={status}>{status.toUpperCase()}</Badge>}
+        right={hintIcon}
       />
       <Card.Body>
         {status === "error" ? (

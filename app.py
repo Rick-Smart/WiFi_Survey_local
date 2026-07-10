@@ -1,7 +1,7 @@
 """
 app.py  —  WiFi Survey Pro
-Starts a local HTTP server and opens the browser-based UI.
-No external dependencies — uses Python stdlib only.
+Flask-based local server. Serves the React SPA from web/dist/ when built,
+or falls back to legacy ui/ during development.
 
 Usage:
     python app.py               # Launch GUI in browser
@@ -10,22 +10,23 @@ Usage:
 """
 
 import argparse
-import json
+import os
 import pathlib
 import socket
-import socketserver
 import sys
 import threading
 import time
-import urllib.parse
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from flask import Flask, jsonify, request, send_from_directory, abort
 
 import scanner as sc
 from localization_manager import LocalizationManager
 from survey_storage import SurveyStorage
 from walk_manager import WalkSurveyManager
 
+
+# ── Path helpers ──────────────────────────────────────────────────────────────
 
 def app_root_dir() -> pathlib.Path:
     if getattr(sys, 'frozen', False):
@@ -38,476 +39,477 @@ def resource_path(*parts: str) -> pathlib.Path:
     return bundle_root.joinpath(*parts)
 
 
-APP_ROOT = app_root_dir()
-UI_FILE = resource_path('ui', 'index.html')
-MOBILE_UI_FILE = resource_path('ui', 'mobile_walker.html')
-APP_JS_FILE = resource_path('ui', 'app.js')
-STYLES_FILE = resource_path('ui', 'styles.css')
+def data_root_dir() -> pathlib.Path:
+    """Writable data directory.
+
+    When frozen (installed exe) the app may live in a read-only location such
+    as Program Files, so write user data to a per-user writable folder instead.
+    When running from source, keep everything in the repo for a portable dev
+    setup.
+    """
+    if getattr(sys, 'frozen', False):
+        base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
+        if base:
+            return pathlib.Path(base) / 'WiFi Survey Pro'
+    return app_root_dir()
 
 
-def get_local_ipv4_candidates():
-    ips = set()
+# ── Service singletons ────────────────────────────────────────────────────────
+
+WALK = WalkSurveyManager()
+LOCALIZE = LocalizationManager(
+    position_provider=lambda: (WALK.state().get('position') or {'x_m': 0.0, 'y_m': 0.0}),
+    checkpoint_provider=lambda: WALK.state().get('checkpoints') or [],
+)
+STORAGE = SurveyStorage(root=data_root_dir() / 'survey_data')
+
+_mobile_lock = threading.Lock()
+_mobile_state: dict = {
+    'connected': False, 'last_seen_at': None, 'last_seen_epoch_ms': 0,
+    'running': False, 'sensor_enabled': False, 'auto_start': False,
+    'heading_deg': None, 'step_len_m': None, 'detected_steps': 0,
+    'sent_steps': 0, 'heading_jitter_deg': None, 'last_sensor_at': None,
+    'ua': None,
+}
+
+
+def _mobile_snapshot() -> dict:
+    now_ms = int(time.time() * 1000)
+    with _mobile_lock:
+        st = dict(_mobile_state)
+    last_ms = int(st.get('last_seen_epoch_ms') or 0)
+    age_ms  = max(0, now_ms - last_ms) if last_ms else 0
+    st['age_ms']    = age_ms
+    st['connected'] = bool(last_ms and age_ms <= 6000)
+    return st
+
+
+def _update_mobile(payload: dict, ua: str) -> dict:
+    now_ms = int(time.time() * 1000)
+    with _mobile_lock:
+        _mobile_state.update({
+            'last_seen_at':       time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'last_seen_epoch_ms': now_ms,
+            'ua':                 (ua or '')[:160],
+            'running':            bool(payload.get('running')),
+            'sensor_enabled':     bool(payload.get('sensor_enabled')),
+            'auto_start':         bool(payload.get('auto_start')),
+            'heading_deg':        payload.get('heading_deg'),
+            'step_len_m':         payload.get('step_len_m'),
+            'detected_steps':     int(payload.get('detected_steps') or 0),
+            'sent_steps':         int(payload.get('sent_steps') or 0),
+            'heading_jitter_deg': payload.get('heading_jitter_deg'),
+            'last_sensor_at':     payload.get('last_sensor_at') or None,
+            'connected':          True,
+        })
+    return _mobile_snapshot()
+
+
+def _local_ips() -> list:
+    ips: set = set()
     try:
         _, _, host_ips = socket.gethostbyname_ex(socket.gethostname())
-        for ip in host_ips:
-            if ip and not ip.startswith('127.'):
-                ips.add(ip)
+        ips = {ip for ip in host_ips if ip and not ip.startswith('127.')}
     except Exception:
         pass
     return sorted(ips)
 
 
-WALK = WalkSurveyManager()
-LOCALIZE = LocalizationManager(
-    position_provider=lambda: (WALK.state().get('position') or {'x_m': 0.0, 'y_m': 0.0}),
-    checkpoint_provider=lambda: WALK.state().get('checkpoints') or []
-)
-STORAGE = SurveyStorage(root=APP_ROOT / 'survey_data')
-MOBILE_LOCK = threading.Lock()
-MOBILE_STATE = {
-    'connected': False,
-    'last_seen_at': None,
-    'last_seen_epoch_ms': 0,
-    'running': False,
-    'sensor_enabled': False,
-    'auto_start': False,
-    'heading_deg': None,
-    'step_len_m': None,
-    'detected_steps': 0,
-    'sent_steps': 0,
-    'heading_jitter_deg': None,
-    'last_sensor_at': None,
-    'ua': None,
-}
+def _body() -> dict:
+    """Safe JSON body parse — never raises."""
+    return request.get_json(force=True, silent=True) or {}
 
 
-def _now_iso() -> str:
-    return time.strftime('%Y-%m-%dT%H:%M:%S')
+# ── Flask app ─────────────────────────────────────────────────────────────────
+
+UI_DIR   = resource_path('ui')
+DIST_DIR = resource_path('web', 'dist')
+
+app = Flask(__name__, static_folder=None)
+app.config['PROPAGATE_EXCEPTIONS'] = False
+app.config['JSON_SORT_KEYS'] = False
 
 
-def mobile_state_snapshot() -> dict:
-    now_ms = int(time.time() * 1000)
-    with MOBILE_LOCK:
-        st = dict(MOBILE_STATE)
-    last_seen_ms = int(st.get('last_seen_epoch_ms') or 0)
-    age_ms = max(0, now_ms - last_seen_ms) if last_seen_ms else 0
-    st['age_ms'] = age_ms
-    st['connected'] = bool(last_seen_ms and age_ms <= 6000)
-    return st
+@app.after_request
+def _cors(response):
+    """Allow Vite dev server (port 5173) and the app's own origin."""
+    origin = request.headers.get('Origin', '')
+    if '127.0.0.1' in origin or 'localhost' in origin:
+        response.headers['Access-Control-Allow-Origin']  = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Cache-Control']                = 'no-cache'
+    return response
 
 
-def update_mobile_state(payload: dict, ua: str) -> dict:
-    now_ms = int(time.time() * 1000)
-    with MOBILE_LOCK:
-        MOBILE_STATE['last_seen_at'] = _now_iso()
-        MOBILE_STATE['last_seen_epoch_ms'] = now_ms
-        MOBILE_STATE['ua'] = (ua or '')[:160]
-        MOBILE_STATE['running'] = bool(payload.get('running'))
-        MOBILE_STATE['sensor_enabled'] = bool(payload.get('sensor_enabled'))
-        MOBILE_STATE['auto_start'] = bool(payload.get('auto_start'))
-        MOBILE_STATE['heading_deg'] = payload.get('heading_deg')
-        MOBILE_STATE['step_len_m'] = payload.get('step_len_m')
-        MOBILE_STATE['detected_steps'] = int(payload.get('detected_steps') or 0)
-        MOBILE_STATE['sent_steps'] = int(payload.get('sent_steps') or 0)
-        MOBILE_STATE['heading_jitter_deg'] = payload.get('heading_jitter_deg')
-        MOBILE_STATE['last_sensor_at'] = payload.get('last_sensor_at') or None
-        MOBILE_STATE['connected'] = True
-    return mobile_state_snapshot()
+@app.errorhandler(404)
+def _e404(_e):
+    return jsonify(error='Not found'), 404
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HTTP handler
-# ─────────────────────────────────────────────────────────────────────────────
+@app.errorhandler(Exception)
+def _e500(exc):
+    return jsonify(error=str(exc)), 500
 
-class Handler(BaseHTTPRequestHandler):
 
-    def log_message(self, fmt, *args):
-        pass  # suppress default per-request logging
+# ── Static / SPA ──────────────────────────────────────────────────────────────
 
-    # ── helpers ───────────────────────────────────────────────────
+def _spa_root() -> pathlib.Path:
+    """Return the directory to serve the SPA from."""
+    return DIST_DIR if DIST_DIR.exists() else UI_DIR
 
-    def _send(self, body: bytes, content_type='text/html', status=200):
-        self.send_response(status)
-        self.send_header('Content-Type', content_type)
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-cache')
-        # Allow the page to call its own server (same origin is fine, but
-        # include CORS header as a safety net for some browser configs)
-        self.send_header('Access-Control-Allow-Origin', f'http://127.0.0.1:{self.server.server_address[1]}')
-        self.end_headers()
-        self.wfile.write(body)
 
-    def _json(self, data, status=200):
-        body = json.dumps(data, default=str).encode()
-        self._send(body, 'application/json', status)
+@app.get('/')
+def root():
+    return send_from_directory(str(_spa_root()), 'index.html')
 
-    def _not_found(self):
-        self._send(b'Not found', 'text/plain', 404)
 
-    def _read_json_body(self):
-        length = int(self.headers.get('Content-Length', 0))
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length) or b'{}'
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
+@app.get('/mobile')
+def mobile():
+    src   = _spa_root()
+    fname = 'mobile_walker.html'
+    if (src / fname).exists():
+        return send_from_directory(str(src), fname)
+    abort(404)
 
-    # ── GET ───────────────────────────────────────────────────────
 
-    def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path.rstrip('/')
+@app.get('/assets/<path:filename>')
+def assets(filename):
+    """Vite hashed asset files (JS bundles, CSS, fonts, images)."""
+    d = DIST_DIR / 'assets'
+    if not d.exists():
+        abort(404)
+    return send_from_directory(str(d), filename)
 
-        if path in ('', '/index.html'):
-            try:
-                html = UI_FILE.read_bytes()
-                self._send(html, 'text/html; charset=utf-8')
-            except FileNotFoundError:
-                self._send(b'<h1>ui/index.html not found</h1>', 'text/html', 500)
-            return
 
-        if path == '/mobile':
-            try:
-                html = MOBILE_UI_FILE.read_bytes()
-                self._send(html, 'text/html; charset=utf-8')
-            except FileNotFoundError:
-                self._send(b'<h1>ui/mobile_walker.html not found</h1>', 'text/html', 500)
-            return
+@app.get('/<path:filename>')
+def static_files(filename):
+    """Serve any known static file; fall back to index.html for the SPA router."""
+    root = _spa_root()
+    target = root / filename
+    if target.exists() and target.is_file():
+        return send_from_directory(str(root), filename)
+    # SPA client-side routing fallback
+    return send_from_directory(str(root), 'index.html')
 
-        if path == '/app.js':
-            try:
-                content = APP_JS_FILE.read_bytes()
-                self._send(content, 'application/javascript; charset=utf-8')
-            except FileNotFoundError:
-                self._send(b'/* ui/app.js not found */', 'application/javascript', 500)
-            return
 
-        if path == '/styles.css':
-            try:
-                content = STYLES_FILE.read_bytes()
-                self._send(content, 'text/css; charset=utf-8')
-            except FileNotFoundError:
-                self._send(b'/* ui/styles.css not found */', 'text/css', 500)
-            return
+# ── Scan ──────────────────────────────────────────────────────────────────────
 
-        if path == '/api/modules':
-            self._json([m.meta() for m in sc.MODULES])
-            return
+@app.get('/api/modules')
+def api_modules():
+    return jsonify([m.meta() for m in sc.MODULES])
 
-        if path == '/api/server/info':
-            host_header = self.headers.get('Host', '')
-            port = self.server.server_address[1]
-            if ':' in host_header:
-                try:
-                    port = int(host_header.rsplit(':', 1)[1])
-                except ValueError:
-                    pass
-            candidates = [f'http://{ip}:{port}/mobile' for ip in get_local_ipv4_candidates()]
-            self._json({'mobile_urls': candidates})
-            return
 
-        if path == '/api/mobile/state':
-            self._json(mobile_state_snapshot())
-            return
+@app.get('/api/scan/<module_id>')
+def api_scan_one(module_id):
+    return jsonify(sc.run_module(module_id))
 
-        if path == '/api/walk/state':
-            self._json(WALK.state())
-            return
 
-        if path == '/api/localize/state':
-            self._json(LOCALIZE.state())
-            return
+@app.post('/api/scan')
+def api_scan_multi():
+    ids = _body().get('modules') or [m.id for m in sc.MODULES]
+    return jsonify({mid: sc.run_module(mid) for mid in ids})
 
-        if path == '/api/localize/references':
-            self._json({'references': LOCALIZE.list_references()})
-            return
 
-        if path == '/api/storage/list':
-            self._json(STORAGE.list_artifacts())
-            return
+# ── Server info ───────────────────────────────────────────────────────────────
 
-        if path == '/api/walk/report':
-            self._json(WALK.report())
-            return
+@app.get('/api/server/info')
+def api_server_info():
+    port = request.host.split(':')[-1] if ':' in request.host else '8765'
+    urls = [f'http://{ip}:{port}/mobile' for ip in _local_ips()]
+    return jsonify({'mobile_urls': urls})
 
-        if path == '/api/live/ssids':
-            self._json(WALK.live_scan())
-            return
 
-        if path.startswith('/api/scan/'):
-            module_id = path.split('/')[-1]
-            result = sc.run_module(module_id)
-            self._json(result)
-            return
+# ── Mobile assist ─────────────────────────────────────────────────────────────
 
-        self._not_found()
+@app.get('/api/mobile/state')
+def api_mobile_state():
+    return jsonify(_mobile_snapshot())
 
-    # ── POST ──────────────────────────────────────────────────────
 
-    def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
+@app.post('/api/mobile/ping')
+def api_mobile_ping():
+    state = _update_mobile(_body(), request.headers.get('User-Agent', ''))
+    return jsonify({'status': 'ok', 'mobile': state})
 
-        if path == '/api/scan':
-            body   = self._read_json_body()
-            ids    = body.get('modules') or [m.id for m in sc.MODULES]
-            results = {mid: sc.run_module(mid) for mid in ids}
-            self._json(results)
-            return
 
-        if path == '/api/mobile/ping':
-            body = self._read_json_body()
-            state = update_mobile_state(body, self.headers.get('User-Agent', ''))
-            self._json({'status': 'ok', 'mobile': state})
-            return
+# ── Site walk ─────────────────────────────────────────────────────────────────
 
-        if path == '/api/walk/start':
-            body = self._read_json_body()
-            interval = body.get('interval_sec', 2.0)
-            self._json(WALK.start(interval))
-            return
+@app.get('/api/walk/state')
+def api_walk_state():
+    return jsonify(WALK.state())
 
-        if path == '/api/walk/stop':
-            self._json(WALK.stop())
-            return
 
-        if path == '/api/walk/checkpoint':
-            body = self._read_json_body()
-            label = body.get('label') or 'Checkpoint'
-            try:
-                self._json({'status': 'ok', 'checkpoint': WALK.add_checkpoint(label)})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=500)
-            return
+@app.get('/api/walk/report')
+def api_walk_report():
+    return jsonify(WALK.report())
 
-        if path == '/api/walk/rename':
-            body = self._read_json_body()
-            sid = body.get('id')
-            label = body.get('label') or ''
-            if sid is None:
-                self._json({'status': 'error', 'error': 'Missing checkpoint id'}, status=400)
-                return
-            updated = WALK.rename_checkpoint(sid, label)
-            if not updated:
-                self._json({'status': 'error', 'error': 'Checkpoint not found'}, status=404)
-                return
-            self._json({'status': 'ok', 'checkpoint': updated})
-            return
 
-        if path == '/api/walk/move':
-            body = self._read_json_body()
-            direction = (body.get('direction') or '').upper().strip()
-            step_m = body.get('step_m', 1.0)
-            label = body.get('label') or ''
-            try:
-                checkpoint = WALK.move_and_capture(direction=direction, step_m=step_m, label=label)
-                self._json({'status': 'ok', 'checkpoint': checkpoint, 'state': WALK.state()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
+@app.get('/api/live/ssids')
+def api_live_ssids():
+    return jsonify(WALK.live_scan())
 
-        if path == '/api/walk/auto-step':
-            body = self._read_json_body()
-            heading_deg = body.get('heading_deg')
-            step_m = body.get('step_m', 0.75)
-            label = body.get('label') or ''
-            if heading_deg is None:
-                self._json({'status': 'error', 'error': 'Missing heading_deg'}, status=400)
-                return
-            try:
-                checkpoint = WALK.auto_step_and_capture(heading_deg=heading_deg, step_m=step_m, label=label)
-                self._json({'status': 'ok', 'checkpoint': checkpoint, 'state': WALK.state()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
 
-        if path == '/api/localize/reference/start':
-            body = self._read_json_body()
-            name = body.get('name') or ''
-            interval = body.get('interval_sec', 2.0)
-            try:
-                self._json({'status': 'ok', 'state': LOCALIZE.start_reference(name=name, interval_sec=interval)})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
+@app.post('/api/walk/start')
+def api_walk_start():
+    interval = _body().get('interval_sec', 2.0)
+    return jsonify(WALK.start(interval))
 
-        if path == '/api/localize/reference/stop':
-            try:
-                self._json({'status': 'ok', 'state': LOCALIZE.stop_reference(), 'references': LOCALIZE.list_references()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
 
-        if path == '/api/localize/replay/start':
-            body = self._read_json_body()
-            reference_id = body.get('reference_id')
-            interval = body.get('interval_sec', 2.0)
-            if reference_id is None:
-                self._json({'status': 'error', 'error': 'Missing reference_id'}, status=400)
-                return
-            try:
-                state = LOCALIZE.start_replay(reference_id=reference_id, interval_sec=interval)
-                self._json({'status': 'ok', 'state': state})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
+@app.post('/api/walk/stop')
+def api_walk_stop():
+    return jsonify(WALK.stop())
 
-        if path == '/api/localize/replay/stop':
-            try:
-                self._json({'status': 'ok', 'state': LOCALIZE.stop_replay()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
 
-        if path == '/api/localize/reference/delete':
-            body = self._read_json_body()
-            reference_id = body.get('reference_id')
-            if reference_id is None:
-                self._json({'status': 'error', 'error': 'Missing reference_id'}, status=400)
-                return
-            removed = LOCALIZE.delete_reference(reference_id)
-            if not removed:
-                self._json({'status': 'error', 'error': 'Reference not found'}, status=404)
-                return
-            self._json({'status': 'ok', 'references': LOCALIZE.list_references(), 'state': LOCALIZE.state()})
-            return
+@app.post('/api/walk/checkpoint')
+def api_walk_checkpoint():
+    label = _body().get('label') or 'Checkpoint'
+    try:
+        return jsonify({'status': 'ok', 'checkpoint': WALK.add_checkpoint(label)})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
 
-        if path == '/api/storage/save-walk':
-            body = self._read_json_body()
-            name = body.get('name') or ''
-            artifact = STORAGE.save_walk(WALK.export_session_payload(name=name), name=name)
-            self._json({'status': 'ok', 'artifact': artifact, 'artifacts': STORAGE.list_artifacts()})
-            return
 
-        if path == '/api/storage/load-walk':
-            body = self._read_json_body()
-            filename = body.get('filename') or ''
-            if not filename:
-                self._json({'status': 'error', 'error': 'Missing filename'}, status=400)
-                return
-            try:
-                payload = STORAGE.load_walk(filename)
-                state = WALK.import_session_payload(payload)
-                self._json({'status': 'ok', 'state': state, 'report': WALK.report()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
+@app.post('/api/walk/rename')
+def api_walk_rename():
+    body  = _body()
+    sid   = body.get('id')
+    label = body.get('label') or ''
+    if sid is None:
+        return jsonify({'status': 'error', 'error': 'Missing checkpoint id'}), 400
+    updated = WALK.rename_checkpoint(sid, label)
+    if not updated:
+        return jsonify({'status': 'error', 'error': 'Checkpoint not found'}), 404
+    return jsonify({'status': 'ok', 'checkpoint': updated})
 
-        if path == '/api/storage/save-references':
-            body = self._read_json_body()
-            name = body.get('name') or ''
-            artifact = STORAGE.save_references(LOCALIZE.export_references_payload(name=name), name=name)
-            self._json({'status': 'ok', 'artifact': artifact, 'artifacts': STORAGE.list_artifacts()})
-            return
 
-        if path == '/api/storage/load-references':
-            body = self._read_json_body()
-            filename = body.get('filename') or ''
-            replace = bool(body.get('replace'))
-            if not filename:
-                self._json({'status': 'error', 'error': 'Missing filename'}, status=400)
-                return
-            try:
-                payload = STORAGE.load_references(filename)
-                state = LOCALIZE.import_references_payload(payload, replace=replace)
-                self._json({'status': 'ok', 'state': state, 'references': LOCALIZE.list_references()})
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
+@app.post('/api/walk/move')
+def api_walk_move():
+    body      = _body()
+    direction = (body.get('direction') or '').upper().strip()
+    step_m    = body.get('step_m', 1.0)
+    label     = body.get('label') or ''
+    try:
+        cp = WALK.move_and_capture(direction=direction, step_m=step_m, label=label)
+        return jsonify({'status': 'ok', 'checkpoint': cp, 'state': WALK.state()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
 
-        if path == '/api/storage/save-bundle':
-            body = self._read_json_body()
-            name = body.get('name') or ''
-            reset_after_export = bool(body.get('reset_after_export'))
-            bundle = {
-                'kind': 'survey_bundle',
-                'name': name or 'survey-bundle',
-                'saved_at': WALK._now_iso(),
-                'walk_session': WALK.export_session_payload(name=name or 'walk-session'),
-                'reference_library': LOCALIZE.export_references_payload(name=name or 'reference-library'),
-            }
-            artifact = STORAGE.save_bundle(bundle, name=name)
-            payload = {'status': 'ok', 'artifact': artifact, 'artifacts': STORAGE.list_artifacts()}
-            if reset_after_export:
-                payload['walk_state'] = WALK.reset_session()
-                payload['walk_report'] = WALK.report()
-                payload['localize_state'] = LOCALIZE.reset_session()
-                payload['references'] = LOCALIZE.list_references()
-                payload['reset_applied'] = True
-            self._json(payload)
-            return
 
-        if path == '/api/storage/reset-site-walk':
-            walk_state = WALK.reset_session()
-            localize_state = LOCALIZE.reset_session()
-            self._json({
-                'status': 'ok',
-                'walk_state': walk_state,
-                'walk_report': WALK.report(),
-                'localize_state': localize_state,
-                'references': LOCALIZE.list_references(),
-            })
-            return
+@app.post('/api/walk/auto-step')
+def api_walk_auto_step():
+    body        = _body()
+    heading_deg = body.get('heading_deg')
+    step_m      = body.get('step_m', 0.75)
+    label       = body.get('label') or ''
+    if heading_deg is None:
+        return jsonify({'status': 'error', 'error': 'Missing heading_deg'}), 400
+    try:
+        cp = WALK.auto_step_and_capture(heading_deg=heading_deg, step_m=step_m, label=label)
+        return jsonify({'status': 'ok', 'checkpoint': cp, 'state': WALK.state()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
 
-        if path == '/api/storage/reset-and-delete':
-            walk_state = WALK.reset_session()
-            localize_state = LOCALIZE.reset_session()
-            removed = STORAGE.delete_all_artifacts()
-            self._json({
-                'status': 'ok',
-                'removed': removed,
-                'walk_state': walk_state,
-                'walk_report': WALK.report(),
-                'localize_state': localize_state,
-                'references': LOCALIZE.list_references(),
-                'artifacts': STORAGE.list_artifacts(),
-            })
-            return
 
-        if path == '/api/storage/load-bundle':
-            body = self._read_json_body()
-            filename = body.get('filename') or ''
-            replace = bool(body.get('replace_references'))
-            if not filename:
-                self._json({'status': 'error', 'error': 'Missing filename'}, status=400)
-                return
-            try:
-                bundle = STORAGE.load_bundle(filename)
-                WALK.import_session_payload(bundle.get('walk_session') or {})
-                LOCALIZE.import_references_payload(bundle.get('reference_library') or {}, replace=replace)
-                self._json({
-                    'status': 'ok',
-                    'walk_state': WALK.state(),
-                    'walk_report': WALK.report(),
-                    'localize_state': LOCALIZE.state(),
+# ── Localization ──────────────────────────────────────────────────────────────
+
+@app.get('/api/localize/state')
+def api_localize_state():
+    return jsonify(LOCALIZE.state())
+
+
+@app.get('/api/localize/references')
+def api_localize_references():
+    return jsonify({'references': LOCALIZE.list_references()})
+
+
+@app.post('/api/localize/reference/start')
+def api_localize_ref_start():
+    body     = _body()
+    name     = body.get('name') or ''
+    interval = body.get('interval_sec', 2.0)
+    try:
+        return jsonify({'status': 'ok',
+                        'state': LOCALIZE.start_reference(name=name, interval_sec=interval)})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/localize/reference/stop')
+def api_localize_ref_stop():
+    try:
+        return jsonify({'status': 'ok',
+                        'state': LOCALIZE.stop_reference(),
+                        'references': LOCALIZE.list_references()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/localize/replay/start')
+def api_localize_replay_start():
+    body         = _body()
+    reference_id = body.get('reference_id')
+    interval     = body.get('interval_sec', 2.0)
+    if reference_id is None:
+        return jsonify({'status': 'error', 'error': 'Missing reference_id'}), 400
+    try:
+        state = LOCALIZE.start_replay(reference_id=reference_id, interval_sec=interval)
+        return jsonify({'status': 'ok', 'state': state})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/localize/replay/stop')
+def api_localize_replay_stop():
+    try:
+        return jsonify({'status': 'ok', 'state': LOCALIZE.stop_replay()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/localize/reference/delete')
+def api_localize_ref_delete():
+    reference_id = _body().get('reference_id')
+    if reference_id is None:
+        return jsonify({'status': 'error', 'error': 'Missing reference_id'}), 400
+    removed = LOCALIZE.delete_reference(reference_id)
+    if not removed:
+        return jsonify({'status': 'error', 'error': 'Reference not found'}), 404
+    return jsonify({'status': 'ok',
                     'references': LOCALIZE.list_references(),
-                })
-            except Exception as exc:
-                self._json({'status': 'error', 'error': str(exc)}, status=400)
-            return
-
-        self._not_found()
-
-    # ── OPTIONS (preflight) ───────────────────────────────────────
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+                    'state': LOCALIZE.state()})
 
 
-class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
-    """Handle each request in its own thread so slow scans don't block the UI."""
-    daemon_threads = True
+# ── Storage ───────────────────────────────────────────────────────────────────
+
+@app.get('/api/storage/list')
+def api_storage_list():
+    return jsonify(STORAGE.list_artifacts())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+@app.post('/api/storage/save-walk')
+def api_storage_save_walk():
+    name     = _body().get('name') or ''
+    artifact = STORAGE.save_walk(WALK.export_session_payload(name=name), name=name)
+    return jsonify({'status': 'ok', 'artifact': artifact,
+                    'artifacts': STORAGE.list_artifacts()})
 
-def find_free_port(start: int = 8765) -> int:
+
+@app.post('/api/storage/load-walk')
+def api_storage_load_walk():
+    filename = _body().get('filename') or ''
+    if not filename:
+        return jsonify({'status': 'error', 'error': 'Missing filename'}), 400
+    try:
+        state = WALK.import_session_payload(STORAGE.load_walk(filename))
+        return jsonify({'status': 'ok', 'state': state, 'report': WALK.report()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/storage/save-references')
+def api_storage_save_refs():
+    name     = _body().get('name') or ''
+    artifact = STORAGE.save_references(
+        LOCALIZE.export_references_payload(name=name), name=name)
+    return jsonify({'status': 'ok', 'artifact': artifact,
+                    'artifacts': STORAGE.list_artifacts()})
+
+
+@app.post('/api/storage/load-references')
+def api_storage_load_refs():
+    body     = _body()
+    filename = body.get('filename') or ''
+    replace  = bool(body.get('replace'))
+    if not filename:
+        return jsonify({'status': 'error', 'error': 'Missing filename'}), 400
+    try:
+        state = LOCALIZE.import_references_payload(
+            STORAGE.load_references(filename), replace=replace)
+        return jsonify({'status': 'ok', 'state': state,
+                        'references': LOCALIZE.list_references()})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/storage/save-bundle')
+def api_storage_save_bundle():
+    body               = _body()
+    name               = body.get('name') or ''
+    reset_after_export = bool(body.get('reset_after_export'))
+    bundle = {
+        'kind':              'survey_bundle',
+        'name':              name or 'survey-bundle',
+        'saved_at':          time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'walk_session':      WALK.export_session_payload(name=name or 'walk-session'),
+        'reference_library': LOCALIZE.export_references_payload(
+                                 name=name or 'reference-library'),
+    }
+    artifact = STORAGE.save_bundle(bundle, name=name)
+    resp: dict = {'status': 'ok', 'artifact': artifact,
+                  'artifacts': STORAGE.list_artifacts()}
+    if reset_after_export:
+        resp.update({
+            'walk_state':     WALK.reset_session(),
+            'walk_report':    WALK.report(),
+            'localize_state': LOCALIZE.reset_session(),
+            'references':     LOCALIZE.list_references(),
+            'reset_applied':  True,
+        })
+    return jsonify(resp)
+
+
+@app.post('/api/storage/load-bundle')
+def api_storage_load_bundle():
+    body     = _body()
+    filename = body.get('filename') or ''
+    replace  = bool(body.get('replace_references'))
+    if not filename:
+        return jsonify({'status': 'error', 'error': 'Missing filename'}), 400
+    try:
+        bundle = STORAGE.load_bundle(filename)
+        WALK.import_session_payload(bundle.get('walk_session') or {})
+        LOCALIZE.import_references_payload(
+            bundle.get('reference_library') or {}, replace=replace)
+        return jsonify({
+            'status':         'ok',
+            'walk_state':     WALK.state(),
+            'walk_report':    WALK.report(),
+            'localize_state': LOCALIZE.state(),
+            'references':     LOCALIZE.list_references(),
+        })
+    except Exception as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+
+
+@app.post('/api/storage/reset-site-walk')
+def api_storage_reset_walk():
+    return jsonify({
+        'status':         'ok',
+        'walk_state':     WALK.reset_session(),
+        'walk_report':    WALK.report(),
+        'localize_state': LOCALIZE.reset_session(),
+        'references':     LOCALIZE.list_references(),
+    })
+
+
+@app.post('/api/storage/reset-and-delete')
+def api_storage_reset_delete():
+    removed = STORAGE.delete_all_artifacts()
+    return jsonify({
+        'status':         'ok',
+        'removed':        removed,
+        'walk_state':     WALK.reset_session(),
+        'walk_report':    WALK.report(),
+        'localize_state': LOCALIZE.reset_session(),
+        'references':     LOCALIZE.list_references(),
+        'artifacts':      STORAGE.list_artifacts(),
+    })
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def _find_free_port(start: int = 8765) -> int:
     for port in range(start, start + 100):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -520,14 +522,14 @@ def find_free_port(start: int = 8765) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description='WiFi Survey Pro — local web app')
-    parser.add_argument('--port',       type=int, default=0,    help='Port to listen on (default: auto)')
-    parser.add_argument('--no-browser', action='store_true',    help='Do not open the browser automatically')
+    parser.add_argument('--port',       type=int, default=0,
+                        help='Port to listen on (default: auto-detect from 8765)')
+    parser.add_argument('--no-browser', action='store_true',
+                        help='Do not open the browser automatically')
     args = parser.parse_args()
 
-    port = args.port if args.port else find_free_port()
+    port = args.port if args.port else _find_free_port()
     url  = f'http://127.0.0.1:{port}'
-
-    server = ThreadedHTTPServer(('127.0.0.1', port), Handler)
 
     print()
     print('  ╔══════════════════════════════════════════╗')
@@ -540,10 +542,8 @@ def main():
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print('\n  Stopped.')
+    # Werkzeug dev server — threaded, local-only, no hot-reload needed.
+    app.run(host='127.0.0.1', port=port, threaded=True, use_reloader=False)
 
 
 if __name__ == '__main__':

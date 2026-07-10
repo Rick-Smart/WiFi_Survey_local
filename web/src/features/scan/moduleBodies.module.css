@@ -4,6 +4,82 @@
   color: var(--text-2);
   line-height: 1.5;
 }
+
+/* WLAN event log timeline */
+.eventLog {
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.evtHeader {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.evtCounts {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.evtRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  font-size: var(--fs-xs);
+}
+.evtRow:last-child {
+  border-bottom: none;
+}
+.evtTime {
+  color: var(--text-2);
+  white-space: nowrap;
+  min-width: 9ch;
+}
+.evtBadge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.evtConnect {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--green);
+}
+.evtDisconnect {
+  background: rgba(255, 145, 0, 0.15);
+  color: var(--orange);
+}
+.evtFail {
+  background: rgba(255, 82, 82, 0.15);
+  color: var(--red);
+}
+.evtSsid {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.evtDetail {
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .empty {
   padding: var(--space-5) var(--space-4);
   color: var(--text-2);

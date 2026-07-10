@@ -8,6 +8,35 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
+
+/* Tab strip */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  margin-left: var(--space-4);
+}
+.tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  padding: 0 var(--space-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast),
+    border-color var(--dur-fast);
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tabActive {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
 .logo {
   display: flex;
   align-items: center;

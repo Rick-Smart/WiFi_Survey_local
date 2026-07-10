@@ -51,6 +51,7 @@ export function ScanDashboard() {
                 key={m.id}
                 id={m.id}
                 name={m.name}
+                hint={m.hint}
                 result={results[m.id]}
                 duration={durations[m.id]}
               />

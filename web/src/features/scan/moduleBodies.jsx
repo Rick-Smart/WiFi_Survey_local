@@ -277,8 +277,9 @@ function DnsBody({ d }) {
 
 // ── Statistics ───────────────────────────────────────────────────────────
 function StatisticsBody({ d }) {
+  const isPs = d._source === "ps_adapter";
   const retry = d.retry_rate_pct;
-  const rcol =
+  const retryColor =
     retry == null
       ? undefined
       : retry < 5
@@ -286,23 +287,123 @@ function StatisticsBody({ d }) {
         : retry < 15
           ? "var(--yellow)"
           : "var(--red)";
+
+  // Only include rows where the backing value is not null — no dash placeholders.
   const items = [
-    { label: "Frames TX", value: fmt(d.frames_tx) },
-    { label: "Frames RX", value: fmt(d.frames_rx) },
-    { label: "Frames Dropped", value: fmt(d.frames_dropped_tx) },
-    { label: "Beacons RX", value: fmt(d.beacons_rx) },
-    { label: "TX Retries", value: fmt(d.tx_retries) },
-    {
-      label: "TX Retry Rate",
-      value: retry != null ? `${retry}%` : "—",
-      color: rcol,
+    d.frames_tx != null && {
+      label: isPs ? "Packets TX" : "Frames TX",
+      value: fmt(d.frames_tx),
     },
-    { label: "ACK Timeouts", value: fmt(d.ack_timeout) },
-    { label: "CTS Timeouts", value: fmt(d.cts_timeout) },
-    { label: "Duplicate Frames", value: fmt(d.dup_frames) },
-    { label: "Multicast RX", value: fmt(d.multicast_rx) },
-  ];
-  return <StatGrid items={items} />;
+    d.frames_rx != null && {
+      label: isPs ? "Packets RX" : "Frames RX",
+      value: fmt(d.frames_rx),
+    },
+    d.multicast_rx != null && {
+      label: "Multicast RX",
+      value: fmt(d.multicast_rx),
+    },
+    d.frames_dropped_tx != null && {
+      label: isPs ? "TX Discarded" : "Frames Dropped",
+      value: fmt(d.frames_dropped_tx),
+    },
+    d.rx_discarded != null && {
+      label: "RX Discarded",
+      value: fmt(d.rx_discarded),
+    },
+    d.beacons_rx != null && { label: "Beacons RX", value: fmt(d.beacons_rx) },
+    d.tx_retries != null && { label: "TX Retries", value: fmt(d.tx_retries) },
+    retry != null && {
+      label: "TX Retry Rate",
+      value: `${retry}%`,
+      color: retryColor,
+    },
+    d.ack_timeout != null && {
+      label: "ACK Timeouts",
+      value: fmt(d.ack_timeout),
+    },
+    d.cts_timeout != null && {
+      label: "CTS Timeouts",
+      value: fmt(d.cts_timeout),
+    },
+    d.dup_frames != null && {
+      label: "Duplicate Frames",
+      value: fmt(d.dup_frames),
+    },
+    d.rx_errors != null && { label: "RX Errors", value: fmt(d.rx_errors) },
+    d.tx_errors != null && { label: "TX Errors", value: fmt(d.tx_errors) },
+  ].filter(Boolean);
+
+  return (
+    <>
+      <StatGrid items={items} />
+      {d.event_log?.length > 0 && (
+        <EventLog
+          events={d.event_log}
+          connects={d.connects_recent ?? 0}
+          disconnects={d.disconnects_recent ?? 0}
+          failures={d.failures_recent ?? 0}
+        />
+      )}
+    </>
+  );
+}
+
+const EVT_LABEL = {
+  connect: "CONNECTED",
+  disconnect: "DISCONNECTED",
+  fail: "FAILED",
+};
+const EVT_CLS = {
+  connect: styles.evtConnect,
+  disconnect: styles.evtDisconnect,
+  fail: styles.evtFail,
+};
+
+function EventLog({ events, connects, disconnects, failures }) {
+  return (
+    <div className={styles.eventLog}>
+      <div className={styles.evtHeader}>
+        Connection History
+        <span className={styles.evtCounts}>
+          {connects} connected &middot; {disconnects} disconnected &middot;{" "}
+          {failures} failed
+        </span>
+      </div>
+      {[...events]
+        .reverse()
+        .slice(0, 12)
+        .map((ev, i) => {
+          const dt = new Date(ev.time);
+          const timeStr = isNaN(dt)
+            ? ev.time
+            : dt.toLocaleString([], {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              });
+          let detail = "";
+          if (ev.type === "connect" && (ev.phy || ev.auth))
+            detail = [ev.phy, ev.auth].filter(Boolean).join(" · ");
+          else if (
+            (ev.type === "disconnect" || ev.type === "fail") &&
+            ev.reason
+          )
+            detail = ev.reason;
+          return (
+            <div key={i} className={styles.evtRow}>
+              <span className={styles.evtTime}>{timeStr}</span>
+              <span className={`${styles.evtBadge} ${EVT_CLS[ev.type] ?? ""}`}>
+                {EVT_LABEL[ev.type] ?? ev.type.toUpperCase()}
+              </span>
+              <span className={styles.evtSsid}>{ev.ssid ?? "—"}</span>
+              {detail && <span className={styles.evtDetail}>{detail}</span>}
+            </div>
+          );
+        })}
+    </div>
+  );
 }
 
 // ── Driver ───────────────────────────────────────────────────────────────

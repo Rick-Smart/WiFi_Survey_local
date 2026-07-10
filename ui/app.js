@@ -1084,13 +1084,13 @@ function computeAndShowScore() {
   const max = defined.reduce((s, k) => s + (parts["_" + k + "_max"] || 0), 0);
   const score = max > 0 ? Math.round((total / max) * 100) : 0;
   const [grade, label, color] =
-    score >= 85
+    score >= 90
       ? ["A", "Excellent", "#00e676"]
-      : score >= 70
+      : score >= 80
         ? ["B", "Good", "#69f0ae"]
-        : score >= 55
+        : score >= 70
           ? ["C", "Fair", "#ffd740"]
-          : score >= 40
+          : score >= 60
             ? ["D", "Poor", "#ff9100"]
             : ["F", "Very Poor", "#ff5252"];
 
@@ -1173,12 +1173,14 @@ function upsertCard(id, name, result) {
   const statusLabel = status.toUpperCase();
   const badgeClass = `badge-${status}`;
 
+  const hint = (state.modules.find((m) => m.id === id) || {}).hint || "";
   const headHtml = `
     <div class="card-head" onclick="toggleCard('${id}')">
       <span class="ch-icon">${MODULE_ICONS[id] || "🔧"}</span>
       <span class="ch-title">${name}</span>
       <span class="ch-badge ${badgeClass}">${statusLabel}</span>
       ${durStr ? `<span class="ch-dur">${durStr}</span>` : ""}
+      ${hint ? `<i class="ch-hint" data-hint="${hint.replace(/"/g, "&quot;")}" onclick="event.stopPropagation()" title="">i</i>` : ""}
       <span class="ch-chevron">▾</span>
     </div>`;
 
@@ -2142,8 +2144,9 @@ function renderDNS(d) {
 
 // ── Statistics renderer ───────────────────────────────────────
 function renderStatistics(d) {
+  const isPs = d._source === "ps_adapter";
   const retry = d.retry_rate_pct;
-  const rcol =
+  const retryColor =
     retry == null
       ? ""
       : retry < 5
@@ -2152,30 +2155,110 @@ function renderStatistics(d) {
           ? "#ffd740"
           : "#ff5252";
 
-  const items = [
-    ["Frames TX", fmt(d.frames_tx), ""],
-    ["Frames RX", fmt(d.frames_rx), ""],
-    ["Frames Dropped", fmt(d.frames_dropped_tx), ""],
-    ["Beacons RX", fmt(d.beacons_rx), ""],
-    ["TX Retries", fmt(d.tx_retries), ""],
-    ["TX Retry Rate", retry != null ? retry + "%" : "—", rcol],
-    ["ACK Timeouts", fmt(d.ack_timeout), ""],
-    ["CTS Timeouts", fmt(d.cts_timeout), ""],
-    ["Duplicate Frames", fmt(d.dup_frames), ""],
-    ["Multicast RX", fmt(d.multicast_rx), ""],
-  ];
+  // Build rows only for fields with real data — no null placeholders ever shown.
+  const rows = [
+    d.frames_tx != null && [
+      isPs ? "Packets TX" : "Frames TX",
+      fmt(d.frames_tx),
+      "",
+    ],
+    d.frames_rx != null && [
+      isPs ? "Packets RX" : "Frames RX",
+      fmt(d.frames_rx),
+      "",
+    ],
+    d.multicast_rx != null && ["Multicast RX", fmt(d.multicast_rx), ""],
+    d.frames_dropped_tx != null && [
+      isPs ? "TX Discarded" : "Frames Dropped",
+      fmt(d.frames_dropped_tx),
+      "",
+    ],
+    d.rx_discarded != null && ["RX Discarded", fmt(d.rx_discarded), ""],
+    d.beacons_rx != null && ["Beacons RX", fmt(d.beacons_rx), ""],
+    d.tx_retries != null && ["TX Retries", fmt(d.tx_retries), ""],
+    retry != null && ["TX Retry Rate", retry + "%", retryColor],
+    d.ack_timeout != null && ["ACK Timeouts", fmt(d.ack_timeout), ""],
+    d.cts_timeout != null && ["CTS Timeouts", fmt(d.cts_timeout), ""],
+    d.dup_frames != null && ["Duplicate Frames", fmt(d.dup_frames), ""],
+    d.rx_errors != null && ["RX Errors", fmt(d.rx_errors), ""],
+    d.tx_errors != null && ["TX Errors", fmt(d.tx_errors), ""],
+  ].filter(Boolean);
 
-  const cells = items
+  if (!rows.length)
+    return `<div class="card-empty">No statistics available.</div>`;
+
+  const cells = rows
     .map(
       ([k, v, col]) => `
     <div class="stat-item">
       <div class="si-key">${k}</div>
-      <div class="si-val" style="${col ? "color:" + col : ""}">${v ?? "—"}</div>
+      <div class="si-val" style="${col ? "color:" + col : ""}">${v}</div>
     </div>`,
     )
     .join("");
 
-  return `<div class="stat-grid">${cells}</div>`;
+  let html = `<div class="stat-grid">${cells}</div>`;
+
+  // ── WLAN event log timeline ───────────────────────────────────────────────
+  const events = d.event_log;
+  if (events && events.length) {
+    const TYPE_LABEL = {
+      connect: "CONNECTED",
+      disconnect: "DISCONNECTED",
+      fail: "FAILED",
+    };
+    const TYPE_CLASS = {
+      connect: "we-connect",
+      disconnect: "we-disconnect",
+      fail: "we-fail",
+    };
+
+    const evRows = events
+      .slice()
+      .reverse()
+      .slice(0, 12)
+      .map((ev) => {
+        const dt = new Date(ev.time);
+        const timeStr = isNaN(dt)
+          ? ev.time
+          : dt.toLocaleString([], {
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            });
+        let detail = "";
+        if (ev.type === "connect" && (ev.phy || ev.auth))
+          detail = [ev.phy, ev.auth].filter(Boolean).join(" · ");
+        else if ((ev.type === "disconnect" || ev.type === "fail") && ev.reason)
+          detail = ev.reason;
+        if (ev.type === "fail" && ev.rssi != null)
+          detail += (detail ? "  " : "") + `RSSI ${ev.rssi} dBm`;
+        return `
+        <div class="we-row">
+          <span class="we-time">${escHtml(timeStr)}</span>
+          <span class="we-badge ${TYPE_CLASS[ev.type]}">${TYPE_LABEL[ev.type] || ev.type.toUpperCase()}</span>
+          <span class="we-ssid">${escHtml(ev.ssid || "—")}</span>
+          ${detail ? `<span class="we-detail">${escHtml(detail)}</span>` : ""}
+        </div>`;
+      })
+      .join("");
+
+    html += `
+      <div class="wlan-events">
+        <div class="we-header">Connection History
+          <span class="we-counts">
+            ${d.connects_recent ?? 0} connected &middot;
+            ${d.disconnects_recent ?? 0} disconnected &middot;
+            ${d.failures_recent ?? 0} failed
+          </span>
+        </div>
+        ${evRows}
+      </div>`;
+  }
+
+  return html;
 }
 
 function fmt(n) {

@@ -285,6 +285,133 @@ aside {
   background: var(--red);
 }
 
+/* Hint icon — ℹ circle with CSS tooltip (on card headers) */
+.card-head .ch-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--text2);
+  color: var(--text2);
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  cursor: default;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+.card-head .ch-hint:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.card-head .ch-hint::after {
+  content: attr(data-hint);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  width: 300px;
+  white-space: normal;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.card-head .ch-hint:hover::after {
+  opacity: 1;
+}
+
+/* WLAN event log timeline (inside PKT card) */
+.wlan-events {
+  border-top: 1px solid var(--border);
+  padding: 10px 16px 14px;
+}
+.we-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.we-counts {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text2);
+  font-size: 11px;
+}
+.we-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+}
+.we-row:last-child {
+  border-bottom: none;
+}
+.we-time {
+  color: var(--text2);
+  white-space: nowrap;
+  min-width: 11ch;
+}
+.we-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.we-connect {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--green);
+}
+.we-disconnect {
+  background: rgba(255, 145, 0, 0.15);
+  color: var(--orange);
+}
+.we-fail {
+  background: rgba(255, 82, 82, 0.15);
+  color: var(--red);
+}
+.we-ssid {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.we-detail {
+  color: var(--text2);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Toggle switch */
 .toggle {
   position: relative;

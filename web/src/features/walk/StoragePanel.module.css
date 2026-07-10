@@ -1,0 +1,82 @@
+.panel {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.sectionTitle {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--space-3);
+}
+.group {
+  margin-bottom: var(--space-3);
+}
+.label {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  margin-bottom: var(--space-1);
+}
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+}
+.select {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--fs-xs);
+}
+.empty {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-style: italic;
+}
+.btnGhost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnGhost:hover {
+  color: var(--text);
+  border-color: var(--text-2);
+}
+.btnGhost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btnDanger {
+  background: rgba(255, 82, 82, 0.12);
+  color: var(--red);
+  border: 1px solid rgba(255, 82, 82, 0.3);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.btnDanger:hover {
+  background: rgba(255, 82, 82, 0.2);
+}

@@ -31,6 +31,58 @@
   font-size: var(--fs-sm);
 }
 
+/* Hint icon on card header */
+.hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--text-2);
+  color: var(--text-2);
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  cursor: default;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+  transition:
+    border-color var(--dur-fast),
+    color var(--dur-fast);
+}
+.hint:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.hint::after {
+  content: attr(data-hint);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  width: 300px;
+  white-space: normal;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.hint:hover::after {
+  opacity: 1;
+}
+
 .warnings {
   padding: var(--space-2) var(--space-4) 0;
   display: flex;

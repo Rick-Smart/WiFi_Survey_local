@@ -12,6 +12,9 @@ build/
 dist/
 *.spec.bak
 
+# ── Installer output (Inno Setup) ────────
+installer/Output/
+
 # ── Node / Vite (web frontend) ───────────
 web/node_modules/
 web/dist/

@@ -1,0 +1,83 @@
+.layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Map */
+.mapWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #101326;
+}
+.calBanner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  z-index: 10;
+  pointer-events: auto;
+}
+.calCancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+/* Lower strip */
+.lower {
+  display: flex;
+  min-height: 160px;
+  max-height: 260px;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.checkpointCard {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.storageCard {
+  width: 340px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+.cardHead {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+}
