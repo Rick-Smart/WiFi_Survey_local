@@ -2,19 +2,32 @@ import { useAppStore } from "../../store/useAppStore.js";
 import { HealthScore } from "./HealthScore.jsx";
 import styles from "./ModuleSidebar.module.css";
 
-// Groups modules by their `category` field, preserving first-seen order.
+const CATEGORY_ORDER = ["connection", "rf", "security", "network", "advanced"];
+const CATEGORY_LABELS = {
+  connection: "Connection",
+  rf: "RF & Radio",
+  security: "Security",
+  network: "Network",
+  advanced: "Advanced",
+};
+
+// Groups modules in the canonical category order, falling back to first-seen.
 function groupByCategory(modules) {
-  const groups = [];
-  const index = new Map();
+  const map = new Map();
   for (const m of modules) {
-    const cat = m.category || "Other";
-    if (!index.has(cat)) {
-      index.set(cat, groups.length);
-      groups.push([cat, []]);
-    }
-    groups[index.get(cat)][1].push(m);
+    const cat = m.category || "other";
+    if (!map.has(cat)) map.set(cat, []);
+    map.get(cat).push(m);
   }
-  return groups;
+  const ordered = [];
+  for (const cat of CATEGORY_ORDER) {
+    if (map.has(cat)) {
+      ordered.push([cat, map.get(cat)]);
+      map.delete(cat);
+    }
+  }
+  for (const [cat, mods] of map) ordered.push([cat, mods]);
+  return ordered;
 }
 
 function Toggle({ checked, onChange }) {
@@ -46,7 +59,7 @@ export function ModuleSidebar() {
       <div className={styles.heading}>Scan Modules</div>
       {groups.map(([cat, mods]) => (
         <div key={cat}>
-          <div className={styles.section}>{cat}</div>
+          <div className={styles.section}>{CATEGORY_LABELS[cat] ?? cat}</div>
           {mods.map((m) => (
             <div
               key={m.id}
