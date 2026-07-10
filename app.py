@@ -122,7 +122,7 @@ def _body() -> dict:
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 
-UI_DIR   = resource_path('ui')
+UI_DIR   = resource_path('ui')       # kept for dev fallback (no dist build)
 DIST_DIR = resource_path('web', 'dist')
 
 app = Flask(__name__, static_folder=None)
@@ -155,7 +155,7 @@ def _e500(exc):
 # ── Static / SPA ──────────────────────────────────────────────────────────────
 
 def _spa_root() -> pathlib.Path:
-    """Return the directory to serve the SPA from."""
+    """Dist build first; fall back to ui/ for dev without a built dist."""
     return DIST_DIR if DIST_DIR.exists() else UI_DIR
 
 
@@ -167,10 +167,11 @@ def root():
 @app.get('/mobile')
 def mobile():
     fname = 'mobile_walker.html'
-    # Check dist first (future React port), fall back to legacy ui/
-    for src in [DIST_DIR, UI_DIR]:
-        if src.exists() and (src / fname).exists():
-            return send_from_directory(str(src), fname)
+    if (DIST_DIR / fname).exists():
+        return send_from_directory(str(DIST_DIR), fname)
+    # Fallback for dev environments without a dist build
+    if (UI_DIR / fname).exists():
+        return send_from_directory(str(UI_DIR), fname)
     abort(404)
 
 
