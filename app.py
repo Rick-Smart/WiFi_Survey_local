@@ -166,10 +166,11 @@ def root():
 
 @app.get('/mobile')
 def mobile():
-    src   = _spa_root()
     fname = 'mobile_walker.html'
-    if (src / fname).exists():
-        return send_from_directory(str(src), fname)
+    # Check dist first (future React port), fall back to legacy ui/
+    for src in [DIST_DIR, UI_DIR]:
+        if src.exists() and (src / fname).exists():
+            return send_from_directory(str(src), fname)
     abort(404)
 
 

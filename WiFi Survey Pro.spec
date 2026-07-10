@@ -5,7 +5,10 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('ui', 'ui')],
+    datas=[
+        ('web/dist', 'dist'),               # React SPA (built by: npm --prefix web run build)
+        ('ui/mobile_walker.html', 'ui'),     # Mobile helper page (not yet ported to React)
+    ],
     hiddenimports=[
         'flask',
         'werkzeug',

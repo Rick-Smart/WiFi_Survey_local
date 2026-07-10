@@ -9,26 +9,40 @@ echo   WiFi Survey Pro  —  building Windows exe
 echo  ============================================
 echo.
 
+:: ── Step 0: build the React frontend ──────────────────────
+echo  [pre] Building React frontend...
+where npm >nul 2>&1
+if not errorlevel 1 (
+    npm --prefix "%~dp0web" run build
+    if errorlevel 1 (
+        echo  ERROR: npm build failed.
+        exit /b 1
+    )
+) else (
+    echo  WARNING: npm not found; skipping React build. Ensure web/dist exists.
+)
+echo.
+
 where uv >nul 2>&1
 if not errorlevel 1 (
     echo  Using uv + PyInstaller...
-    uv run --no-project --with pyinstaller pyinstaller --noconfirm --clean --onefile --name "WiFi Survey Pro" --icon "assets\wifi-survey-pro.ico" --add-data "ui;ui" app.py
+    uv run --no-project --with pyinstaller pyinstaller --noconfirm --clean "WiFi Survey Pro.spec"
     goto :done
 )
 
 where py >nul 2>&1
 if not errorlevel 1 (
     echo  Using py launcher + PyInstaller...
-    py -m pip install --upgrade pyinstaller
-    py -m PyInstaller --noconfirm --clean --onefile --name "WiFi Survey Pro" --icon "assets\wifi-survey-pro.ico" --add-data "ui;ui" app.py
+    py -m pip install --upgrade pyinstaller flask werkzeug jinja2 click
+    py -m PyInstaller --noconfirm --clean "WiFi Survey Pro.spec"
     goto :done
 )
 
 where python >nul 2>&1
 if not errorlevel 1 (
     echo  Using python + PyInstaller...
-    python -m pip install --upgrade pyinstaller
-    python -m PyInstaller --noconfirm --clean --onefile --name "WiFi Survey Pro" --icon "assets\wifi-survey-pro.ico" --add-data "ui;ui" app.py
+    python -m pip install --upgrade pyinstaller flask werkzeug jinja2 click
+    python -m PyInstaller --noconfirm --clean "WiFi Survey Pro.spec"
     goto :done
 )
 

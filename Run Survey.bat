@@ -23,7 +23,7 @@ if exist "%~dp0dist\WiFi Survey Pro.exe" (
 where uv >nul 2>&1
 if not errorlevel 1 (
     echo  Using uv to launch...
-    uv run --no-project app.py %*
+    uv run --with flask app.py %*
     goto :end
 )
 
