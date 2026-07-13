@@ -430,23 +430,32 @@ function DriverBody({ d }) {
 
 // ── PHY Rate ─────────────────────────────────────────────────────────────
 function PhyRateBody({ d }) {
-  const eff = d.efficiency_pct; // capped at 100 for gauge
-  const effRaw = d.efficiency_raw_pct; // actual ratio (may exceed 100 for 4ss+)
+  const eff = d.efficiency_pct;
+  const effRaw = d.efficiency_raw_pct;
   const effColor =
     eff == null
       ? "var(--text-2)"
-      : eff >= 60
+      : eff >= 80
         ? "var(--green)"
-        : eff >= 30
+        : eff >= 50
           ? "var(--yellow)"
           : "var(--red)";
 
+  // Config label derived from inferred NSS/BW
+  const configLabel =
+    d.rx_nss && d.rx_bw_mhz
+      ? `${d.rx_nss}×${d.rx_nss} MIMO, ${d.rx_bw_mhz} MHz`
+      : null;
+
+  const ceilLabel =
+    d.theoretical_max_mbps != null
+      ? `${d.theoretical_max_mbps} Mbps${configLabel ? ` (${configLabel}, ${d.ceiling_mcs_name || "max MCS"})` : ""}`
+      : null;
+
   const effLabel =
-    effRaw != null && effRaw > 100
-      ? `${eff}% (${effRaw}% vs 2×2 ref)`
-      : eff != null
-        ? `${eff}%`
-        : null;
+    eff != null
+      ? `${eff}%${effRaw != null && effRaw > 100 ? ` (${effRaw}% vs ref)` : ""}`
+      : null;
 
   const rows = [
     ["Radio Standard", d.radio_label || d.radio_type],
@@ -461,9 +470,18 @@ function PhyRateBody({ d }) {
       d.transmit_rate_mbps != null ? `${d.transmit_rate_mbps} Mbps` : null,
     ],
     [
-      "Theoretical Max (2×2)",
-      d.theoretical_max_mbps != null ? `${d.theoretical_max_mbps} Mbps` : null,
+      "RX Config",
+      d.rx_nss && d.rx_mcs_name
+        ? `${d.rx_nss}ss, ${d.rx_bw_mhz} MHz, ${d.rx_mcs_name}`
+        : null,
     ],
+    [
+      "TX Config",
+      d.tx_nss && d.tx_mcs != null
+        ? `${d.tx_nss}ss, ${d.tx_bw_mhz} MHz, MCS${d.tx_mcs}`
+        : null,
+    ],
+    ["Ceiling", ceilLabel],
     [
       "Efficiency",
       effLabel,
@@ -471,9 +489,9 @@ function PhyRateBody({ d }) {
         quality:
           eff == null
             ? undefined
-            : eff >= 60
+            : eff >= 80
               ? "excellent"
-              : eff >= 30
+              : eff >= 50
                 ? "fair"
                 : "critical",
       },
@@ -482,12 +500,27 @@ function PhyRateBody({ d }) {
       "Signal",
       d.signal_pct + (d.signal_dbm != null ? ` (~${d.signal_dbm} dBm)` : ""),
     ],
-  ];
+  ].filter(([, v]) => v != null);
+
   return (
     <>
       {eff != null && <Gauge value={eff} label="efficiency" color={effColor} />}
       <KVTable rows={rows} />
+      {d.why?.length > 0 && <PhyWhySection lines={d.why} />}
     </>
+  );
+}
+
+function PhyWhySection({ lines }) {
+  return (
+    <div className={styles.whySection}>
+      <div className={styles.whyTitle}>How this was calculated</div>
+      {lines.map((line, i) => (
+        <div key={i} className={styles.whyLine}>
+          {line}
+        </div>
+      ))}
+    </div>
   );
 }
 

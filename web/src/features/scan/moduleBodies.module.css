@@ -5,6 +5,31 @@
   line-height: 1.5;
 }
 
+/* PHY Rate "how this was calculated" derivation section */
+.whySection {
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.whyTitle {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--space-2);
+}
+.whyLine {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.6;
+  padding: 1px 0;
+}
+.whyLine::before {
+  content: "→ ";
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+}
+
 /* WLAN event log timeline */
 .eventLog {
   border-top: 1px solid var(--border);

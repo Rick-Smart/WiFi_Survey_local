@@ -854,6 +854,114 @@ class DriverScan(ScanModule):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PHY rate helpers — formula-based inference
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Data subcarriers per channel width for HE/EHT (802.11ax / 802.11be)
+_PHY_SC = {20: 234, 40: 468, 80: 980, 160: 1960, 320: 3920}
+# HT (802.11n) uses fewer subcarriers
+_PHY_SC_N = {20: 52, 40: 108}
+
+# Symbol duration with 0.8 μs guard interval (HE/EHT/VHT short-GI)
+_SYM_US = 13.6
+
+# Bits per subcarrier at each MCS (modulation_bits × code_rate)
+_MCS_BITS = {
+    0:  0.5,    # BPSK 1/2
+    1:  1.0,    # QPSK 1/2
+    2:  1.5,    # QPSK 3/4
+    3:  2.0,    # 16-QAM 1/2
+    4:  3.0,    # 16-QAM 3/4
+    5:  4.0,    # 64-QAM 2/3
+    6:  4.5,    # 64-QAM 3/4
+    7:  5.0,    # 64-QAM 5/6
+    8:  6.0,    # 256-QAM 3/4
+    9:  6.667,  # 256-QAM 5/6
+    10: 7.5,    # 1024-QAM 3/4  (ax/be)
+    11: 8.333,  # 1024-QAM 5/6  (ax/be)  ← ax max
+    12: 9.0,    # 4096-QAM 3/4  (be only)
+    13: 10.0,   # 4096-QAM 5/6  (be only) ← be max
+}
+_MCS_NAME = {
+    9:  '256-QAM 5/6',    10: '1024-QAM 3/4',
+    11: '1024-QAM 5/6',   12: '4096-QAM 3/4',   13: '4096-QAM 5/6',
+}
+
+# Maximum MCS per standard
+_STD_MAX_MCS  = {'be': 13, 'ax': 11, 'ac': 9, 'n': 7}
+# Common key MCS values used during matching
+_PROBE_MCS    = [9, 10, 11, 12, 13]
+_PROBE_BWS    = {'be': [20, 40, 80, 160, 320],
+                 'ax': [20, 40, 80, 160],
+                 'ac': [20, 40, 80, 160],
+                 'n':  [20, 40]}
+
+
+def _phy_rate(nss, bw_mhz, mcs, std_key='ax'):
+    """Exact PHY rate in Mbps for the given configuration."""
+    bits = _MCS_BITS.get(mcs)
+    if bits is None:
+        return None
+    sc = (_PHY_SC_N if std_key == 'n' else _PHY_SC).get(bw_mhz)
+    if sc is None:
+        return None
+    return round(nss * sc * bits / _SYM_US, 1)
+
+
+def _infer_phy_config(std_key, observed_mbps, max_nss=4):
+    """Return the best-matching (nss, bw_mhz, mcs, ceiling_mbps) for an observed rate.
+
+    Searches all (NSS, BW, MCS) combinations for the given standard and returns
+    the configuration whose calculated rate is within 1.5 % of the observed rate.
+    The ceiling is the same (NSS, BW) pair at the highest supported MCS.
+    """
+    if observed_mbps <= 0:
+        return None
+
+    best = None
+    best_err = float('inf')
+
+    for bw in _PROBE_BWS.get(std_key, [80, 160]):
+        for nss in range(1, max_nss + 1):
+            for mcs in _PROBE_MCS:
+                if mcs > _STD_MAX_MCS.get(std_key, 9):
+                    continue
+                rate = _phy_rate(nss, bw, mcs, std_key)
+                if rate is None:
+                    continue
+                err = abs(observed_mbps - rate) / rate
+                if err < best_err:
+                    best_err = err
+                    best = (nss, bw, mcs, rate)
+
+    if best is None or best_err > 0.015:
+        return None   # no match within 1.5 %
+
+    nss, bw, mcs, matched_rate = best
+    max_mcs = _STD_MAX_MCS.get(std_key, 9)
+    ceiling = _phy_rate(nss, bw, max_mcs, std_key)
+    return {
+        'nss':          nss,
+        'bw_mhz':       bw,
+        'mcs':          mcs,
+        'mcs_name':     _MCS_NAME.get(mcs, f'MCS{mcs}'),
+        'matched_rate': matched_rate,
+        'max_mcs':      max_mcs,
+        'max_mcs_name': _MCS_NAME.get(max_mcs, f'MCS{max_mcs}'),
+        'ceiling_mbps': ceiling,
+    }
+
+
+def _std_key(radio_str):
+    """Extract the canonical standard key from a netsh radio type string."""
+    r = radio_str.lower()
+    for k in ('be', 'ax', 'ac', 'n', 'g', 'a', 'b'):
+        if f'802.11{k}' in r:
+            return k
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Module 9 — PHY Rate Analysis (offline throughput estimate)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -869,78 +977,124 @@ class PhyRateScan(ScanModule):
     category    = 'rf'
     tags        = []
 
-    # Typical 2-stream theoretical maxes (most modern adapters are 2×2 MIMO).
-    # Keys ordered longest-first so substring matching picks the most specific
-    # standard (e.g. '802.11be' must match before '802.11b').
-    THEORETICAL = {
-        '802.11be': 5765,   # 2ss × 320 MHz MCS13 (4096-QAM)
-        '802.11ax': 2402,   # 2ss × 160 MHz MCS11 (1024-QAM)
-        '802.11ac':  867,   # 2ss × 80 MHz MCS9
-        '802.11n':   300,   # 2ss × 40 MHz
-        '802.11g':    54,
-        '802.11a':    54,
-        '802.11b':    11,
-    }
-
     def run(self):
-        raw = _run(['netsh', 'wlan', 'show', 'interfaces'])
-        radio    = _extract(r'^\s+Radio type\s*:\s*(.+)',           raw) or ''
-        rx_str   = _extract(r'^\s+Receive rate \(Mbps\)\s*:\s*(.+)', raw) or '0'
-        tx_str   = _extract(r'^\s+Transmit rate \(Mbps\)\s*:\s*(.+)', raw) or '0'
-        sig_pct  = _extract(r'^\s+Signal\s*:\s*(.+)',               raw) or '0'
-        ch_str   = _extract(r'^\s+Channel\s*:\s*(.+)',              raw)
+        raw     = _run(['netsh', 'wlan', 'show', 'interfaces'])
+        radio   = _extract(r'^\s+Radio type\s*:\s*(.+)',             raw) or ''
+        rx_str  = _extract(r'^\s+Receive rate \(Mbps\)\s*:\s*(.+)', raw) or '0'
+        tx_str  = _extract(r'^\s+Transmit rate \(Mbps\)\s*:\s*(.+)', raw) or '0'
+        sig_pct = _extract(r'^\s+Signal\s*:\s*(.+)',                 raw) or '0'
+        ch_str  = _extract(r'^\s+Channel\s*:\s*(.+)',                raw)
 
         try: rx = float(rx_str)
         except: rx = 0.0
         try: tx = float(tx_str)
         except: tx = 0.0
-        try: ch = int(ch_str); band = '5 GHz' if ch > 14 else '2.4 GHz'
-        except: band = 'Unknown'
+        try:
+            ch = int(ch_str)
+            band = '6 GHz' if ch > 177 else '5 GHz' if ch > 14 else '2.4 GHz'
+        except:
+            band = 'Unknown'
 
-        dbm = _pct_to_dbm(sig_pct)
-        theoretical = None
-        for std, maxr in self.THEORETICAL.items():
-            if std in radio.lower():
-                theoretical = maxr
-                break
+        dbm     = _pct_to_dbm(sig_pct)
+        std     = _std_key(radio)
 
-        efficiency = None
-        if theoretical and rx > 0:
-            efficiency = round(rx / theoretical * 100, 1)
-            # >100% means more spatial streams than the 2ss reference — that's fine.
-            # Cap display at 100% so the gauge reads correctly; flag it in the data.
-            efficiency_display = min(efficiency, 100.0)
+        # ── Infer configuration from observed RX rate ─────────────────────
+        rx_cfg  = _infer_phy_config(std, rx) if std and rx > 0 else None
+        tx_cfg  = _infer_phy_config(std, tx) if std and tx > 0 else None
+
+        if rx_cfg:
+            theoretical = rx_cfg['ceiling_mbps']
+            efficiency  = round(rx / theoretical * 100, 1) if theoretical else None
         else:
-            efficiency_display = None
+            # Legacy fallback: use a 2-stream estimate for the detected standard
+            _FALLBACK = {'be': 5765, 'ax': 2402, 'ac': 867, 'n': 300, 'g': 54, 'a': 54, 'b': 11}
+            theoretical = _FALLBACK.get(std)
+            efficiency  = round(rx / theoretical * 100, 1) if theoretical and rx > 0 else None
 
-        recs, warnings = [], []
-        if theoretical and rx > 0 and efficiency is not None and efficiency < 30:
-            warnings.append(f'PHY rate ({rx} Mbps) is only {efficiency}% of theoretical max ({theoretical} Mbps)')
-            recs.append(
-                f'Low PHY rate efficiency ({efficiency}%). Likely causes: weak signal, interference, '
-                'distance from AP, or channel congestion. Move closer to the AP or switch to 5 GHz.'
+        # ── Build human-readable derivation ──────────────────────────────
+        why = []
+        why.append(f'Radio: {RADIO_GENERATIONS.get(radio, radio)} ({radio})')
+        if ch_str:
+            why.append(f'Channel: {ch_str} ({band})')
+        if rx_cfg:
+            cfg = rx_cfg
+            why.append(
+                f'RX {rx} Mbps = {cfg["nss"]}ss × {cfg["bw_mhz"]} MHz × {cfg["mcs_name"]} (MCS{cfg["mcs"]})'
             )
-        if efficiency is not None and efficiency > 100:
-            # More spatial streams than 2ss reference — report actual ratio
-            pass  # not a problem; efficiency_raw_pct is in the data for display
+            if cfg['ceiling_mbps']:
+                why.append(
+                    f'Ceiling at same config using {cfg["max_mcs_name"]} (MCS{cfg["max_mcs"]}): '
+                    f'{cfg["ceiling_mbps"]} Mbps'
+                )
+                why.append(
+                    f'Efficiency: {rx} / {cfg["ceiling_mbps"]} = {efficiency}%'
+                )
+                if efficiency is not None:
+                    if efficiency >= 95:
+                        why.append('Adapter is at or near peak MCS — limited by standard ceiling, not signal.')
+                    elif efficiency >= 70:
+                        gap = round(cfg['ceiling_mbps'] - rx, 1)
+                        why.append(
+                            f'{gap} Mbps headroom available — AP may need Wi-Fi 7 for higher MCS modes.'
+                        )
+                    else:
+                        why.append(
+                            'Large gap suggests signal weakness, interference, or AP capability mismatch.'
+                        )
+        else:
+            why.append(f'RX {rx} Mbps — exact configuration could not be inferred from rate.')
+            if theoretical:
+                why.append(f'Using 2ss fallback reference: {theoretical} Mbps.')
+
+        if tx_cfg and tx_cfg != rx_cfg:
+            why.append(
+                f'TX {tx} Mbps = {tx_cfg["nss"]}ss × {tx_cfg["bw_mhz"]} MHz × '
+                f'{tx_cfg["mcs_name"]} (MCS{tx_cfg["mcs"]})'
+            )
+            if tx_cfg['nss'] != rx_cfg['nss'] if rx_cfg else True:
+                why.append('Asymmetric streams: client uses fewer TX streams to save power (normal).')
+
+        sig_qual, _ = _dbm_quality(dbm)
+        if dbm is not None:
+            why.append(f'Signal: {sig_pct} (~{dbm} dBm) — {sig_qual}.')
+
+        # ── Warnings and recommendations ─────────────────────────────────
+        recs, warnings = [], []
+        if efficiency is not None and efficiency < 30:
+            warnings.append(f'PHY rate ({rx} Mbps) is only {efficiency}% of ceiling ({theoretical} Mbps)')
+            recs.append(
+                f'Low PHY efficiency ({efficiency}%). Move closer to the AP or switch to a less '
+                'congested channel.'
+            )
         if band == '2.4 GHz' and rx < 54:
             warnings.append(f'Low PHY rate on 2.4 GHz: {rx} Mbps')
-        if band == '5 GHz' and rx < 100:
-            warnings.append(f'Low PHY rate on 5 GHz: {rx} Mbps — signal may be weak')
-            recs.append('Low 5 GHz PHY rate suggests weak signal. Move closer to the AP or check for obstacles.')
+        if band in ('5 GHz', '6 GHz') and rx < 100:
+            warnings.append(f'Low PHY rate on {band}: {rx} Mbps — signal may be weak')
+            recs.append(f'Low {band} PHY rate. Move closer to the AP or check for obstacles.')
 
         d = {
-            'radio_type':        radio,
-            'radio_label':       RADIO_GENERATIONS.get(radio, radio),
-            'receive_rate_mbps': rx,
-            'transmit_rate_mbps': tx,
+            'radio_type':           radio,
+            'radio_label':          RADIO_GENERATIONS.get(radio, radio),
+            'receive_rate_mbps':    rx,
+            'transmit_rate_mbps':   tx,
             'theoretical_max_mbps': theoretical,
-            'efficiency_pct':    efficiency_display,
-            'efficiency_raw_pct': efficiency,
-            'signal_pct':        sig_pct,
-            'signal_dbm':        dbm,
-            'band':              band,
-            'channel':           ch_str,
+            'efficiency_pct':       min(efficiency, 100.0) if efficiency is not None else None,
+            'efficiency_raw_pct':   efficiency,
+            'signal_pct':           sig_pct,
+            'signal_dbm':           dbm,
+            'band':                 band,
+            'channel':              ch_str,
+            # Inferred configuration details
+            'rx_nss':               rx_cfg['nss']       if rx_cfg else None,
+            'rx_bw_mhz':            rx_cfg['bw_mhz']    if rx_cfg else None,
+            'rx_mcs':               rx_cfg['mcs']        if rx_cfg else None,
+            'rx_mcs_name':          rx_cfg['mcs_name']   if rx_cfg else None,
+            'tx_nss':               tx_cfg['nss']        if tx_cfg else None,
+            'tx_bw_mhz':            tx_cfg['bw_mhz']     if tx_cfg else None,
+            'tx_mcs':               tx_cfg['mcs']        if tx_cfg else None,
+            'ceiling_mcs_name':     rx_cfg['max_mcs_name'] if rx_cfg else None,
+            'config_inferred':      bool(rx_cfg),
+            'why':                  why,
         }
         score = min(100, int(efficiency)) if efficiency is not None else 50
         return self._ok(d, score=score, recs=recs, warnings=warnings)
