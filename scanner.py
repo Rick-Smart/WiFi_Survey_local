@@ -480,21 +480,39 @@ class ChannelSurveyScan(ScanModule):
             except (ValueError, TypeError):
                 pass
 
-        # Congestion score
+        # Congestion score (same log curve as the health score widget)
+        import math as _math
         recs, warnings = [], []
         cong_score = 100
-        if my_ch and my_ch <= 14:
-            cnt = ch_24.get(my_ch, 0)
-            if cnt > 5:
-                cong_score = 20
-                warnings.append(f'Severe congestion: {cnt} APs on your channel {my_ch}')
-                best = min(NON_OVERLAPPING_24, key=lambda c: ch_24.get(c, 0))
-                recs.append(f'Change your router channel to {best} (fewest competing APs on 2.4 GHz non-overlapping set).')
-            elif cnt > 2:
-                cong_score = 60
-                warnings.append(f'Moderate congestion: {cnt} APs on channel {my_ch}')
-            if my_ch not in NON_OVERLAPPING_24:
-                recs.append(f'Channel {my_ch} overlaps neighbors — use channels 1, 6, or 11 on 2.4 GHz.')
+        co_count_24 = 0
+        co_count_5  = 0
+
+        if my_ch:
+            if my_ch <= 14:
+                co_count_24 = max(0, ch_24.get(my_ch, 0) - 1)
+                if co_count_24 > 0:
+                    saturation = 10
+                    penalty = _math.log(co_count_24 + 1) / _math.log(saturation + 1)
+                    cong_score = max(0, round(100 * (1 - penalty)))
+                if co_count_24 > 5:
+                    warnings.append(f'Severe congestion: {co_count_24} co-channel APs on 2.4 GHz ch{my_ch}')
+                    best = min(NON_OVERLAPPING_24, key=lambda c: ch_24.get(c, 0))
+                    recs.append(f'Change your router channel to {best} (fewest competing APs on 2.4 GHz).')
+                elif co_count_24 > 2:
+                    warnings.append(f'Moderate congestion: {co_count_24} co-channel APs on ch{my_ch}')
+                if my_ch not in NON_OVERLAPPING_24:
+                    recs.append(f'Channel {my_ch} overlaps neighbors — use channels 1, 6, or 11 on 2.4 GHz.')
+            else:
+                co_count_5 = max(0, ch_5.get(my_ch, 0) - 1)
+                if co_count_5 > 0:
+                    saturation = 80
+                    penalty = _math.log(co_count_5 + 1) / _math.log(saturation + 1)
+                    cong_score = max(0, round(100 * (1 - penalty)))
+                if co_count_5 > 20:
+                    warnings.append(f'Heavy 5 GHz co-channel congestion: {co_count_5} APs on ch{my_ch}')
+                    recs.append(f'Consider switching to a less congested 5 GHz channel.')
+                elif co_count_5 > 5:
+                    warnings.append(f'Moderate 5 GHz co-channel congestion: {co_count_5} APs on ch{my_ch}')
 
         d = {
             'aps':            aps,
@@ -503,6 +521,8 @@ class ChannelSurveyScan(ScanModule):
             'ch_24':          ch_24,
             'ch_5':           ch_5,
             'my_channel':     my_ch,
+            'co_channel_24':  co_count_24,
+            'co_channel_5':   co_count_5,
             'non_overlapping_24': sorted(NON_OVERLAPPING_24),
         }
         return self._ok(d, score=cong_score, recs=recs, warnings=warnings)

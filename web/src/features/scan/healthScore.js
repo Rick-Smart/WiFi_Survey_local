@@ -68,14 +68,21 @@ export function computeHealthScore(results) {
     parts._Latency_max = 30;
   }
 
-  // Channel (15 pts) — real co-channel congestion for BOTH bands.
+  // Channel (15 pts) — logarithmic co-channel congestion so the score stays
+  // meaningful across the full range (a packed 5 GHz mesh ≠ a single co-channel
+  // neighbour).  saturation = the co-channel count that yields 0 pts:
+  //   2.4 GHz: 10 APs  (only 3 non-overlapping channels → congestion is severe)
+  //   5 GHz:   80 APs  (many non-overlapping channels → need more to be critical)
   const ch = results["channel_survey"];
   if (ch?.data?.my_channel) {
-    const myCh = ch.data.my_channel;
-    const map = (myCh <= 14 ? ch.data.ch_24 : ch.data.ch_5) || {};
+    const myCh     = ch.data.my_channel;
+    const map      = (myCh <= 14 ? ch.data.ch_24 : ch.data.ch_5) || {};
     const coChannel = Math.max(0, (map[myCh] || 0) - 1); // exclude our own AP
-    const penaltyPer = myCh <= 14 ? 3 : 1.5;
-    parts.Channel = Math.round(Math.max(0, 15 - coChannel * penaltyPer));
+    const saturation = myCh <= 14 ? 10 : 80;
+    const penalty  = coChannel > 0
+      ? Math.log(coChannel + 1) / Math.log(saturation + 1)
+      : 0;
+    parts.Channel      = Math.round(Math.max(0, 15 * (1 - penalty)));
     parts._Channel_max = 15;
   }
 

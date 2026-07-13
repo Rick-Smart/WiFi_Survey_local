@@ -155,6 +155,15 @@ function ChannelSurveyBody({ d }) {
       {d.ch_5 && Object.keys(d.ch_5).length > 0 && (
         <ChannelChart label="5 GHz" chMap={d.ch_5} myChannel={d.my_channel} />
       )}
+      {d.my_channel != null && (
+        <div className={styles.note}>
+          {d.my_channel <= 14
+            ? `Co-channel APs on ch${d.my_channel}: ${d.co_channel_24 ?? "—"}`
+            : `Co-channel APs on ch${d.my_channel}: ${d.co_channel_5 ?? "—"}`}
+          {" — "}score uses a logarithmic scale (saturation at{" "}
+          {d.my_channel <= 14 ? "10" : "80"} APs).
+        </div>
+      )}
       {d.aps && d.aps.length > 0 && (
         <>
           <div className={styles.tableCaption}>
