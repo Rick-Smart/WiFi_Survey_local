@@ -470,15 +470,40 @@ class ChannelSurveyScan(ScanModule):
                 })
         aps.sort(key=lambda x: x.get('signal_dbm') or -100, reverse=True)
 
-        # Channel maps
+        # Channel maps — raw BSSID counts (used for the channel chart display)
         ch_24, ch_5 = {}, {}
+        # Device-level channel maps — grouped by first 5 MAC bytes so that a
+        # multi-SSID mesh node (e.g. 7 BSSIDs from the same radio) counts as
+        # one physical device, not 7.
+        ch_24_dev, ch_5_dev = {}, {}   # channel → set of 5-byte prefixes
+        my_prefix = ':'.join(my_bssid.split(':')[:5]) if my_bssid else None
+
         for ap in aps:
             try:
-                ch = int(ap['channel'])
-                if ch <= 14: ch_24[ch] = ch_24.get(ch, 0) + 1
-                else:        ch_5[ch]  = ch_5.get(ch,  0) + 1
+                ch    = int(ap['channel'])
+                bssid = ap.get('bssid', '').lower()
+                parts = bssid.split(':')
+                prefix = ':'.join(parts[:5]) if len(parts) >= 5 else bssid
+                if ch <= 14:
+                    ch_24[ch] = ch_24.get(ch, 0) + 1
+                    ch_24_dev.setdefault(ch, set()).add(prefix)
+                else:
+                    ch_5[ch]  = ch_5.get(ch, 0) + 1
+                    ch_5_dev.setdefault(ch, set()).add(prefix)
             except (ValueError, TypeError):
                 pass
+
+        # Convert sets → counts for JSON serialisation
+        ch_24_devices = {k: len(v) for k, v in ch_24_dev.items()}
+        ch_5_devices  = {k: len(v) for k, v in ch_5_dev.items()}
+
+        # Co-channel: unique physical devices excluding our own radio
+        def _co_devices(dev_map, ch, own_prefix):
+            devices = dev_map.get(ch, set())
+            unique  = len(devices)
+            if own_prefix and own_prefix in devices:
+                unique -= 1
+            return max(0, unique)
 
         # Congestion score (same log curve as the health score widget)
         import math as _math
@@ -486,43 +511,61 @@ class ChannelSurveyScan(ScanModule):
         cong_score = 100
         co_count_24 = 0
         co_count_5  = 0
+        co_devices_24 = 0
+        co_devices_5  = 0
 
         if my_ch:
             if my_ch <= 14:
-                co_count_24 = max(0, ch_24.get(my_ch, 0) - 1)
-                if co_count_24 > 0:
+                co_count_24   = max(0, ch_24.get(my_ch, 0) - 1)
+                co_devices_24 = _co_devices(ch_24_dev, my_ch, my_prefix)
+                n = co_devices_24  # score on unique devices
+                if n > 0:
                     saturation = 10
-                    penalty = _math.log(co_count_24 + 1) / _math.log(saturation + 1)
+                    penalty = _math.log(n + 1) / _math.log(saturation + 1)
                     cong_score = max(0, round(100 * (1 - penalty)))
-                if co_count_24 > 5:
-                    warnings.append(f'Severe congestion: {co_count_24} co-channel APs on 2.4 GHz ch{my_ch}')
-                    best = min(NON_OVERLAPPING_24, key=lambda c: ch_24.get(c, 0))
-                    recs.append(f'Change your router channel to {best} (fewest competing APs on 2.4 GHz).')
-                elif co_count_24 > 2:
-                    warnings.append(f'Moderate congestion: {co_count_24} co-channel APs on ch{my_ch}')
+                if n > 5:
+                    warnings.append(
+                        f'Severe congestion: {n} unique devices on 2.4 GHz ch{my_ch} '
+                        f'({co_count_24} BSSIDs total)')
+                    best = min(NON_OVERLAPPING_24, key=lambda c: ch_24_devices.get(c, 0))
+                    recs.append(f'Change your router channel to {best} (fewest competing devices on 2.4 GHz).')
+                elif n > 2:
+                    warnings.append(
+                        f'Moderate congestion: {n} unique devices on ch{my_ch} '
+                        f'({co_count_24} BSSIDs)')
                 if my_ch not in NON_OVERLAPPING_24:
                     recs.append(f'Channel {my_ch} overlaps neighbors — use channels 1, 6, or 11 on 2.4 GHz.')
             else:
-                co_count_5 = max(0, ch_5.get(my_ch, 0) - 1)
-                if co_count_5 > 0:
+                co_count_5   = max(0, ch_5.get(my_ch, 0) - 1)
+                co_devices_5 = _co_devices(ch_5_dev, my_ch, my_prefix)
+                n = co_devices_5
+                if n > 0:
                     saturation = 80
-                    penalty = _math.log(co_count_5 + 1) / _math.log(saturation + 1)
+                    penalty = _math.log(n + 1) / _math.log(saturation + 1)
                     cong_score = max(0, round(100 * (1 - penalty)))
-                if co_count_5 > 20:
-                    warnings.append(f'Heavy 5 GHz co-channel congestion: {co_count_5} APs on ch{my_ch}')
-                    recs.append(f'Consider switching to a less congested 5 GHz channel.')
-                elif co_count_5 > 5:
-                    warnings.append(f'Moderate 5 GHz co-channel congestion: {co_count_5} APs on ch{my_ch}')
+                if n > 10:
+                    warnings.append(
+                        f'Heavy 5 GHz co-channel congestion: {n} unique devices on ch{my_ch} '
+                        f'({co_count_5} BSSIDs total)')
+                    recs.append('Consider switching to a less congested 5 GHz channel.')
+                elif n > 3:
+                    warnings.append(
+                        f'Moderate 5 GHz co-channel congestion: {n} unique devices on ch{my_ch} '
+                        f'({co_count_5} BSSIDs)')
 
         d = {
-            'aps':            aps,
-            'total_aps':      len(aps),
-            'total_ssids':    len(networks),
-            'ch_24':          ch_24,
-            'ch_5':           ch_5,
-            'my_channel':     my_ch,
-            'co_channel_24':  co_count_24,
-            'co_channel_5':   co_count_5,
+            'aps':              aps,
+            'total_aps':        len(aps),
+            'total_ssids':      len(networks),
+            'ch_24':            ch_24,
+            'ch_5':             ch_5,
+            'ch_24_devices':    ch_24_devices,   # unique physical devices per channel
+            'ch_5_devices':     ch_5_devices,
+            'my_channel':       my_ch,
+            'co_channel_24':    co_count_24,      # raw BSSID count (display)
+            'co_channel_5':     co_count_5,
+            'co_devices_24':    co_devices_24,    # unique device count (scoring)
+            'co_devices_5':     co_devices_5,
             'non_overlapping_24': sorted(NON_OVERLAPPING_24),
         }
         return self._ok(d, score=cong_score, recs=recs, warnings=warnings)

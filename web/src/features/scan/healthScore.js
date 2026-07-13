@@ -68,21 +68,32 @@ export function computeHealthScore(results) {
     parts._Latency_max = 30;
   }
 
-  // Channel (15 pts) — logarithmic co-channel congestion so the score stays
-  // meaningful across the full range (a packed 5 GHz mesh ≠ a single co-channel
-  // neighbour).  saturation = the co-channel count that yields 0 pts:
-  //   2.4 GHz: 10 APs  (only 3 non-overlapping channels → congestion is severe)
-  //   5 GHz:   80 APs  (many non-overlapping channels → need more to be critical)
+  // Channel (15 pts) — scores on unique co-channel physical devices (grouped
+  // by 5-byte BSSID prefix) so a mesh node broadcasting 7 SSIDs counts as one
+  // interferer, not seven.  Falls back to raw BSSID count when device data is
+  // unavailable.  Log curve so the score stays meaningful at extreme counts.
+  //   2.4 GHz saturation: 10 devices   5 GHz saturation: 80 devices
   const ch = results["channel_survey"];
   if (ch?.data?.my_channel) {
-    const myCh     = ch.data.my_channel;
-    const map      = (myCh <= 14 ? ch.data.ch_24 : ch.data.ch_5) || {};
-    const coChannel = Math.max(0, (map[myCh] || 0) - 1); // exclude our own AP
-    const saturation = myCh <= 14 ? 10 : 80;
-    const penalty  = coChannel > 0
-      ? Math.log(coChannel + 1) / Math.log(saturation + 1)
-      : 0;
-    parts.Channel      = Math.round(Math.max(0, 15 * (1 - penalty)));
+    const myCh = ch.data.my_channel;
+    const is24 = myCh <= 14;
+    const saturation = is24 ? 10 : 80;
+
+    // Prefer the pre-computed co_devices_* field (unique physical devices).
+    // Fall back to raw BSSID map minus 1 for backwards compatibility.
+    let coChannel;
+    if (is24 && ch.data.co_devices_24 != null) {
+      coChannel = ch.data.co_devices_24;
+    } else if (!is24 && ch.data.co_devices_5 != null) {
+      coChannel = ch.data.co_devices_5;
+    } else {
+      const map = (is24 ? ch.data.ch_24 : ch.data.ch_5) || {};
+      coChannel = Math.max(0, (map[myCh] || 0) - 1);
+    }
+
+    const penalty =
+      coChannel > 0 ? Math.log(coChannel + 1) / Math.log(saturation + 1) : 0;
+    parts.Channel = Math.round(Math.max(0, 15 * (1 - penalty)));
     parts._Channel_max = 15;
   }
 
