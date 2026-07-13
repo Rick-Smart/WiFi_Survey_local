@@ -869,15 +869,17 @@ class PhyRateScan(ScanModule):
     category    = 'rf'
     tags        = []
 
-    # Approximate theoretical maxes (single spatial stream, short GI where applicable)
+    # Typical 2-stream theoretical maxes (most modern adapters are 2×2 MIMO).
+    # Keys ordered longest-first so substring matching picks the most specific
+    # standard (e.g. '802.11be' must match before '802.11b').
     THEORETICAL = {
-        '802.11b':  11,
-        '802.11a':  54,
-        '802.11g':  54,
-        '802.11n':  150,    # 1ss 40MHz
-        '802.11ac': 433,    # 1ss 80MHz
-        '802.11ax': 600,    # 1ss 80MHz
-        '802.11be': 1200,   # 1ss 320MHz estimate
+        '802.11be': 5765,   # 2ss × 320 MHz MCS13 (4096-QAM)
+        '802.11ax': 2402,   # 2ss × 160 MHz MCS11 (1024-QAM)
+        '802.11ac':  867,   # 2ss × 80 MHz MCS9
+        '802.11n':   300,   # 2ss × 40 MHz
+        '802.11g':    54,
+        '802.11a':    54,
+        '802.11b':    11,
     }
 
     def run(self):
@@ -905,6 +907,11 @@ class PhyRateScan(ScanModule):
         efficiency = None
         if theoretical and rx > 0:
             efficiency = round(rx / theoretical * 100, 1)
+            # >100% means more spatial streams than the 2ss reference — that's fine.
+            # Cap display at 100% so the gauge reads correctly; flag it in the data.
+            efficiency_display = min(efficiency, 100.0)
+        else:
+            efficiency_display = None
 
         recs, warnings = [], []
         if theoretical and rx > 0 and efficiency is not None and efficiency < 30:
@@ -913,6 +920,9 @@ class PhyRateScan(ScanModule):
                 f'Low PHY rate efficiency ({efficiency}%). Likely causes: weak signal, interference, '
                 'distance from AP, or channel congestion. Move closer to the AP or switch to 5 GHz.'
             )
+        if efficiency is not None and efficiency > 100:
+            # More spatial streams than 2ss reference — report actual ratio
+            pass  # not a problem; efficiency_raw_pct is in the data for display
         if band == '2.4 GHz' and rx < 54:
             warnings.append(f'Low PHY rate on 2.4 GHz: {rx} Mbps')
         if band == '5 GHz' and rx < 100:
@@ -925,7 +935,8 @@ class PhyRateScan(ScanModule):
             'receive_rate_mbps': rx,
             'transmit_rate_mbps': tx,
             'theoretical_max_mbps': theoretical,
-            'efficiency_pct':    efficiency,
+            'efficiency_pct':    efficiency_display,
+            'efficiency_raw_pct': efficiency,
             'signal_pct':        sig_pct,
             'signal_dbm':        dbm,
             'band':              band,

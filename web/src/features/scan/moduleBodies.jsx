@@ -430,7 +430,8 @@ function DriverBody({ d }) {
 
 // ── PHY Rate ─────────────────────────────────────────────────────────────
 function PhyRateBody({ d }) {
-  const eff = d.efficiency_pct;
+  const eff = d.efficiency_pct; // capped at 100 for gauge
+  const effRaw = d.efficiency_raw_pct; // actual ratio (may exceed 100 for 4ss+)
   const effColor =
     eff == null
       ? "var(--text-2)"
@@ -439,6 +440,14 @@ function PhyRateBody({ d }) {
         : eff >= 30
           ? "var(--yellow)"
           : "var(--red)";
+
+  const effLabel =
+    effRaw != null && effRaw > 100
+      ? `${eff}% (${effRaw}% vs 2×2 ref)`
+      : eff != null
+        ? `${eff}%`
+        : null;
+
   const rows = [
     ["Radio Standard", d.radio_label || d.radio_type],
     ["Band", d.band],
@@ -452,12 +461,12 @@ function PhyRateBody({ d }) {
       d.transmit_rate_mbps != null ? `${d.transmit_rate_mbps} Mbps` : null,
     ],
     [
-      "Theoretical Max",
+      "Theoretical Max (2×2)",
       d.theoretical_max_mbps != null ? `${d.theoretical_max_mbps} Mbps` : null,
     ],
     [
       "Efficiency",
-      eff != null ? `${eff}%` : null,
+      effLabel,
       {
         quality:
           eff == null
